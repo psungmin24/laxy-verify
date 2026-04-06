@@ -1,4 +1,4 @@
-import { execFileSync } from "child_process";
+import { execSync } from "child_process";
 import { existsSync, readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { startDevServer, stopDevServer, type DevServerHandle } from "./dev-server.js";
@@ -20,19 +20,40 @@ function findLhciManifest(tmpDir: string): string | null {
 }
 
 function parseLhciResults(projectPath: string): LighthouseScores | null {
-  const manifest = findLhciManifest(projectPath);
-  if (!manifest) return null;
+  const lhciDir = join(projectPath, ".lighthouseci");
+  if (!existsSync(lhciDir)) return null;
 
   try {
-    const entries = JSON.parse(readFileSync(manifest, "utf-8"));
-    if (!Array.isArray(entries) || entries.length === 0) return null;
+    // Try manifest.json first
+    const manifestPath = join(lhciDir, "manifest.json");
+    if (existsSync(manifestPath)) {
+      const entries = JSON.parse(readFileSync(manifestPath, "utf-8"));
+      if (Array.isArray(entries) && entries.length > 0) {
+        const entry = entries[Math.floor(entries.length / 2)];
+        const reportPath = entry.jsonPath;
+        if (reportPath && existsSync(reportPath)) {
+          return parseReportFile(reportPath);
+        }
+      }
+    }
 
-    // Use the median run (middle entry) or last entry
-    const entry = entries[Math.floor(entries.length / 2)];
-    const reportPath = join(projectPath, ".lighthouseci", entry.jsonPath || "");
+    // Fallback: find lhr-*.json files directly
+    const files = readdirSync(lhciDir)
+      .filter((f) => f.startsWith("lhr-") && f.endsWith(".json"))
+      .sort();
 
-    if (!existsSync(reportPath)) return null;
+    if (files.length === 0) return null;
 
+    // Use the median run
+    const reportPath = join(lhciDir, files[Math.floor(files.length / 2)]);
+    return parseReportFile(reportPath);
+  } catch {
+    return null;
+  }
+}
+
+function parseReportFile(reportPath: string): LighthouseScores | null {
+  try {
     const report = JSON.parse(readFileSync(reportPath, "utf-8"));
     const cat = report.categories;
     if (!cat) return null;
@@ -71,23 +92,23 @@ export async function runLighthouse(
     const url = `http://localhost:${port}`;
 
     // Run lhci collect
-    const npx = process.platform === "win32" ? "npx.cmd" : "npx";
-    const lhciArgs = [
-      "-y", "@lhci/cli", "collect",
+    const chromeFlags = process.env.CI
+      ? "--settings.chromeFlags=--no-sandbox --disable-gpu --headless"
+      : "";
+
+    const cmd = [
+      "npx -y @lhci/cli collect",
       `--url=${url}`,
       `--numberOfRuns=${runs}`,
       "--settings.formFactor=desktop",
       "--settings.screenEmulation.disabled=true",
       "--settings.throttlingMethod=provided",
       "--settings.onlyCategories=performance,accessibility,best-practices,seo",
-    ];
-
-    if (process.env.CI) {
-      lhciArgs.push("--settings.chromeFlags=--no-sandbox --disable-gpu --headless");
-    }
+      chromeFlags,
+    ].filter(Boolean).join(" ");
 
     try {
-      execFileSync(npx, lhciArgs, {
+      execSync(cmd, {
         cwd: projectPath,
         timeout: 120000,
         stdio: "pipe",
