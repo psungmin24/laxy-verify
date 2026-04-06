@@ -119,7 +119,7 @@ export function formatMarkdown(report: VerifyReport): string {
   }
 
   if (report.grade !== "gold") {
-    lines.push("> Want Gold? Add E2E tests with [Laxy](https://github.com/psungmin24/Laxy)");
+    lines.push("> Want Gold? Add E2E tests with [Laxy](https://laxy-blue.vercel.app)");
     lines.push("");
   }
 
