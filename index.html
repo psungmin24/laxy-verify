@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Task Manager</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 24px; border-radius: 8px; }
+        h1 { color: #333; }
+        .form { display: flex; gap: 8px; margin: 16px 0; }
+        input[type="text"] { flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        button { padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .task { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #eee; }
+        .task.completed span { text-decoration: line-through; color: #999; }
+        .empty { text-align: center; color: #999; padding: 40px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Task Manager</h1>
+        <div class="form">
+            <input type="text" id="taskInput" placeholder="Add a new task...">
+            <button onclick="addTask()">Add</button>
+        </div>
+        <div id="taskList"></div>
+    </div>
+    <script>
+        let tasks = [];
+
+        function addTask() {
+            const input = document.getElementById('taskInput');
+            const title = input.value;
+            if (!title) return;
+            tasks.push({ id: Date.now(), title, completed: false });
+            input.value = '';
+            renderTasks();
+        }
+
+        function toggleTask(id) {
+            const task = tasks.find(t => t.id === id);
+            if (task) task.completed = !task.completed;
+            renderTasks();
+        }
+
+        function deleteTask(id) {
+            tasks = tasks.filter(t => t.id !== id);
+            renderTasks();
+        }
+
+        function renderTasks() {
+            const list = document.getElementById('taskList');
+            if (tasks.length === 0) {
+                list.innerHTML = '<div class="empty">No tasks yet. Add one above!</div>';
+                return;
+            }
+            list.innerHTML = tasks.map(task => `
+                <div class="task ${task.completed ? 'completed' : ''}">
+                    <span onclick="toggleTask(${task.id})">${task.title}</span>
+                    <button onclick="deleteTask(${task.id})" style="background:#dc3545;">Delete</button>
+                </div>
+            `).join('');
+        }
+
+        renderTasks();
+    </script>
+</body>
+</html>
