@@ -1,0 +1,97 @@
+name: 'Laxy Verify'
+description: 'Frontend quality gate: build check + Lighthouse audit + verification grade'
+inputs:
+  threshold-config:
+    description: 'Path to .laxy.yml threshold config'
+    required: false
+    default: '.laxy.yml'
+  node-version:
+    description: 'Node.js version'
+    required: false
+    default: '20'
+  skip-lighthouse:
+    description: 'Skip Lighthouse, run build check only'
+    required: false
+    default: 'false'
+outputs:
+  grade:
+    description: 'Verification grade (Gold/Silver/Bronze/Unverified)'
+    value: ${{ steps.verify.outputs.grade }}
+  report:
+    description: 'JSON report string'
+    value: ${{ steps.verify.outputs.report }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install dependencies
+      shell: bash
+      run: npm ci
+
+    - name: Run Laxy Verify
+      id: verify
+      shell: bash
+      run: |
+        SKIP_FLAG=""
+        if [ "${{ inputs.skip-lighthouse }}" = "true" ]; then
+          SKIP_FLAG="--skip-lighthouse"
+        fi
+        npx laxy-verify . --format json --ci $SKIP_FLAG > laxy-report.json 2>&1 || true
+        GRADE=$(node -e "const r=JSON.parse(require('fs').readFileSync('laxy-report.json','utf8'));console.log(r.grade)")
+        echo "grade=$GRADE" >> $GITHUB_OUTPUT
+        echo "report=$(cat laxy-report.json)" >> $GITHUB_OUTPUT
+
+    - name: Post PR Comment
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          let report;
+          try {
+            report = JSON.parse(fs.readFileSync('laxy-report.json', 'utf8'));
+          } catch {
+            console.log('No report file found');
+            return;
+          }
+
+          // Generate markdown from report
+          const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+          const { execSync } = require('child_process');
+          let md;
+          try {
+            md = execSync(`${npx} laxy-verify . --format md --ci --skip-lighthouse 2>/dev/null || true`).toString();
+          } catch {
+            md = `## Laxy Verify — ${report.grade}\n\nSee JSON report for details.`;
+          }
+
+          // Find existing comment
+          const marker = '<!-- laxy-verify -->';
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+          const existing = comments.find(c => c.body?.includes(marker));
+
+          const body = md.includes(marker) ? md : `${marker}\n${md}`;
+
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existing.id,
+              body,
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+          }
