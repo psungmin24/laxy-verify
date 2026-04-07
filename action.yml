@@ -1,0 +1,45 @@
+name: 'Laxy Verify'
+description: 'Frontend quality gate: build + Lighthouse + verification grade'
+inputs:
+  github-token:
+    description: 'GitHub token for PR comment and status check'
+    required: true
+    default: ${{ github.token }}
+  config:
+    description: 'Path to .laxy.yml'
+    required: false
+    default: '.laxy.yml'
+  fail-on:
+    description: 'Grade that fails the check (unverified|bronze|silver|gold)'
+    required: false
+    default: 'bronze'
+outputs:
+  grade:
+    description: 'Verification grade (Gold/Silver/Bronze/Unverified)'
+    value: ${{ steps.verify.outputs.grade }}
+  report:
+    description: 'Path to .laxy-result.json'
+    value: '.laxy-result.json'
+runs:
+  using: 'composite'
+  steps:
+    - uses: browser-actions/setup-chrome@v1.7.2
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    - id: install
+      run: |
+        if [ -f "pnpm-lock.yaml" ]; then npm i -g pnpm && pnpm install --frozen-lockfile
+        elif [ -f "yarn.lock" ]; then yarn install --frozen-lockfile
+        elif [ -f "bun.lockb" ]; then npm i -g bun && bun install --frozen-lockfile
+        else npm ci
+        fi
+      shell: bash
+    - id: verify
+      run: npx laxy-verify . --format json --ci --fail-on ${{ inputs.fail-on }}
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+branding:
+  icon: 'check-circle'
+  color: 'blue'
