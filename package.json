@@ -2,7 +2,7 @@
   "name": "laxy-verify",
   "version": "1.0.0",
   "description": "Frontend quality gate: build + Lighthouse verification",
-  "type": "module",
+  "type": "commonjs",
   "bin": {
     "laxy-verify": "./dist/cli.js"
   },

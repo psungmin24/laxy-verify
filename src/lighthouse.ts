@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import type { LighthouseScores } from "./grade.js";
 
-const req = createRequire(import.meta.url);
+const req = createRequire(__filename);
 
 function resolveLhciBin(): string {
   try {
