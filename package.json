@@ -1,6 +1,6 @@
 {
   "name": "laxy-verify",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Frontend quality gate: build + Lighthouse verification",
   "type": "commonjs",
   "bin": {
