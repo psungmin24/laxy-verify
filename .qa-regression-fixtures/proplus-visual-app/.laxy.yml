@@ -1,0 +1,7 @@
+port: 3314
+fail_on: bronze
+thresholds:
+  performance: 50
+  accessibility: 70
+  seo: 50
+  best_practices: 70

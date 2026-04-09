@@ -1,0 +1,13 @@
+{
+  "name": "laxy-verify-proplus-visual",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3314",
+    "build": "next build"
+  },
+  "dependencies": {
+    "next": "15.3.3",
+    "react": "19.0.0",
+    "react-dom": "19.0.0"
+  }
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildVerifyScenarios, isNavigableInternalHref } from "../src/e2e.js";
+import { buildVerifyScenarios, getVerificationCoverageGaps, isNavigableInternalHref } from "../src/e2e.js";
 import type { VerificationTier } from "../src/verification-core/types.js";
 
 function buildSnapshot(selectors: string[]) {
@@ -61,5 +61,29 @@ describe("verify e2e builder", () => {
 
     const primary = scenarios.find((scenario) => scenario.name === "Primary form interaction");
     expect(primary?.steps.at(-1)?.selector).toBe("[role='status']");
+  });
+
+  it("flags coverage gaps when paid verification cannot find a primary action", () => {
+    const scenarios = buildVerifyScenarios(buildSnapshot([]), "pro");
+    const gaps = getVerificationCoverageGaps(scenarios, "pro");
+
+    expect(gaps[0]).toContain("No primary action scenario was detected");
+  });
+
+  it("adds an error-page health check to the initial render scenario", () => {
+    const scenarios = buildVerifyScenarios(buildSnapshot(["button[type='submit']"]), "pro");
+    const initial = scenarios.find((scenario) => scenario.name === "Initial render");
+
+    expect(initial?.steps.some((step) => step.type === "check_healthy_page")).toBe(true);
+  });
+
+  it("checks that internal navigation does not land on an error page", () => {
+    const scenarios = buildVerifyScenarios(
+      buildSnapshot(["input[type='email']", "input[required]", "button[type='submit']", "a[href='/missing-page']"]),
+      "pro_plus"
+    );
+    const navigation = scenarios.find((scenario) => scenario.name === "Internal navigation");
+
+    expect(navigation?.steps.some((step) => step.description === "Destination should not be an error screen")).toBe(true);
   });
 });

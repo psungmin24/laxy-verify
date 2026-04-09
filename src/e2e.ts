@@ -2,7 +2,7 @@ import puppeteer from "puppeteer";
 import type { VerificationTier } from "./verification-core/types.js";
 
 export interface E2EStep {
-  type: "click" | "fill" | "check_visible" | "wait" | "scroll" | "clear_fill" | "check_validation";
+  type: "click" | "fill" | "check_visible" | "wait" | "scroll" | "clear_fill" | "check_validation" | "check_healthy_page";
   selector?: string;
   value?: string;
   duration?: number;
@@ -112,6 +112,31 @@ function getRequiredFillTarget(selectors: string[]): string | undefined {
   ]);
 }
 
+export function getVerificationCoverageGaps(
+  scenarios: E2EScenario[],
+  tier: VerificationTier
+): string[] {
+  const names = new Set(scenarios.map((scenario) => scenario.name));
+  const gaps: string[] = [];
+
+  const hasPrimaryAction =
+    names.has("Primary form interaction") || names.has("Primary CTA interaction");
+
+  if (tier !== "free" && !hasPrimaryAction) {
+    gaps.push(
+      "No primary action scenario was detected, so the verify run could not validate a real user action."
+    );
+  }
+
+  if (tier === "pro_plus" && scenarios.length < 4) {
+    gaps.push(
+      "Too few meaningful scenarios were detected for a release-confidence pass, so this run stayed shallower than Pro+ expects."
+    );
+  }
+
+  return gaps;
+}
+
 export function buildVerifyScenarios(snapshot: DomSnapshot, tier: VerificationTier): E2EScenario[] {
   const selectors = [...snapshot.selectors, ...snapshot.structures];
   const visibleAnchor = getVisibleAnchor(selectors);
@@ -130,6 +155,7 @@ export function buildVerifyScenarios(snapshot: DomSnapshot, tier: VerificationTi
       steps: [
         { type: "wait", duration: 1200, description: "Wait for hydration" },
         { type: "check_visible", selector: "body", description: "Body should render" },
+        { type: "check_healthy_page", description: "Page should not be an error screen" },
         { type: "check_visible", selector: visibleAnchor, description: "Core UI should stay visible" },
       ],
     },
@@ -184,6 +210,7 @@ export function buildVerifyScenarios(snapshot: DomSnapshot, tier: VerificationTi
         { type: "check_visible", selector: localLinkTarget, description: "Internal link should be visible" },
         { type: "click", selector: localLinkTarget, description: "Navigate using an internal link" },
         { type: "wait", duration: 1000, description: "Wait for navigation" },
+        { type: "check_healthy_page", description: "Destination should not be an error screen" },
         { type: "check_visible", selector: "body", description: "Destination page should render" },
       ],
     });
@@ -317,6 +344,31 @@ async function executeScenario(url: string, scenario: E2EScenario): Promise<E2ES
             if (!step.selector) throw new Error("Missing selector");
             await page.waitForSelector(step.selector, { visible: true, timeout: 8000 });
             break;
+          case "check_healthy_page":
+            const hasErrorPageSignals = await page.evaluate(() => {
+              const title = document.title ?? "";
+              const h1 = document.querySelector("h1")?.textContent ?? "";
+              const bodyText = document.body?.innerText?.slice(0, 1200) ?? "";
+              const haystack = `${title}\n${h1}\n${bodyText}`.toLowerCase();
+
+              const patterns = [
+                /internal server error/,
+                /application error/,
+                /unexpected application error/,
+                /this page could not be found/,
+                /\b404\b/,
+                /\b500\b/,
+                /server error/,
+                /something went wrong/,
+              ];
+
+              return patterns.some((pattern) => pattern.test(haystack));
+            });
+
+            if (hasErrorPageSignals) {
+              throw new Error("The page looks like an error screen, not a healthy app surface.");
+            }
+            break;
           case "check_validation":
             if (!step.selector) throw new Error("Missing selector");
             await page.waitForSelector(step.selector, { visible: true, timeout: 8000 });
@@ -403,9 +455,16 @@ async function executeScenario(url: string, scenario: E2EScenario): Promise<E2ES
 export async function runVerifyE2E(
   url: string,
   tier: VerificationTier
-): Promise<{ scenarios: E2EScenario[]; results: E2EScenarioResult[]; passed: number; failed: number }> {
+): Promise<{
+  scenarios: E2EScenario[];
+  results: E2EScenarioResult[];
+  passed: number;
+  failed: number;
+  coverageGaps: string[];
+}> {
   const snapshot = await captureDomSnapshot(url);
   const scenarios = buildVerifyScenarios(snapshot, tier);
+  const coverageGaps = getVerificationCoverageGaps(scenarios, tier);
   const results: E2EScenarioResult[] = [];
 
   for (const scenario of scenarios) {
@@ -415,5 +474,5 @@ export async function runVerifyE2E(
   const passed = results.filter((result) => result.passed).length;
   const failed = results.length - passed;
 
-  return { scenarios, results, passed, failed };
+  return { scenarios, results, passed, failed, coverageGaps };
 }

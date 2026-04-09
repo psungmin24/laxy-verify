@@ -12,6 +12,7 @@ It is designed around three user questions:
 ```bash
 npx laxy-verify --init --run
 npx laxy-verify .
+npx laxy-verify . --plan-override pro
 npx laxy-verify login
 npx laxy-verify whoami
 npx laxy-verify --help
@@ -120,6 +121,7 @@ Options:
   --config <path>
   --fail-on unverified|bronze|silver|gold
   --skip-lighthouse
+  --plan-override free|pro|pro_plus
   --badge
   --init
   --multi-viewport
@@ -131,6 +133,10 @@ Subcommands:
   whoami
 ```
 
+`--plan-override` is for downgrade testing only.
+Example: if your account is Pro+, you can run `--plan-override pro` or `--plan-override free` to verify the lower-tier behavior without changing your subscription.
+It will reject upgrades above your real entitlement.
+
 ## Result Files
 
 Each run writes `.laxy-result.json`.
@@ -139,6 +145,13 @@ Paid plans also write a readable markdown summary to `laxy-verify-report.md`.
 
 - `Pro`: blocker-focused delivery report
 - `Pro+`: release-readiness report with viewport and visual evidence
+
+Exit behavior follows the verification verdict, not just the legacy grade.
+
+- `build-failed` -> exit 1
+- `hold` -> exit 1
+- `Pro+ investigate` -> exit 1
+- plain lower-tier pass states can still exit 0
 
 ```json
 {
@@ -176,6 +189,11 @@ It includes:
 - exact verification evidence
 - failed E2E scenarios
 - a `Copy For AI` section you can paste directly into Codex, Cursor, Claude, or ChatGPT
+
+## Regression Fixtures
+
+The repo also includes dedicated regression fixtures under `.qa-regression-fixtures/`.
+They intentionally break build, navigation, coverage, performance, viewport behavior, and visual stability so the verifier can be tested against known failure modes.
 
 ## Limitations
 

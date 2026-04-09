@@ -4,14 +4,14 @@ import treeKill from "tree-kill";
 
 export class PortConflictError extends Error {
   constructor(port: number) {
-    super(`Port ${port} is already in use — please free the port or configure a different one in .laxy.yml`);
+    super(`Port ${port} is already in use. Please free the port or configure a different one in .laxy.yml`);
     this.name = "PortConflictError";
   }
 }
 
 export class DevServerTimeoutError extends Error {
   constructor(port: number, timeoutSec: number) {
-    super(`Dev server did not respond on port ${port} within ${timeoutSec}s`);
+    super(`Dev server did not respond with a healthy page on port ${port} within ${timeoutSec}s`);
     this.name = "DevServerTimeoutError";
   }
 }
@@ -45,6 +45,7 @@ export async function startDevServer(
 ): Promise<ServeResult> {
   return new Promise((resolve, reject) => {
     console.log(`Starting dev server: ${command}${cwd ? ` (cwd: ${cwd})` : ""}`);
+    let settled = false;
 
     const proc =
       process.platform === "win32"
@@ -64,7 +65,6 @@ export async function startDevServer(
             cwd,
           });
 
-    // Pipe output to console
     proc.stdout?.on("data", (chunk: Buffer) => {
       const lines = chunk.toString().split("\n").filter(Boolean);
       for (const line of lines) console.log(`  [dev] ${line}`);
@@ -76,6 +76,8 @@ export async function startDevServer(
     });
 
     proc.on("error", (err: NodeJS.ErrnoException) => {
+      if (settled) return;
+      settled = true;
       if (err.code === "EADDRINUSE") {
         reject(new PortConflictError(port));
       } else {
@@ -83,11 +85,18 @@ export async function startDevServer(
       }
     });
 
-    // Poll healthcheck
+    proc.on("exit", (code) => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(`Dev server exited before becoming ready (exit code ${code ?? 1}).`));
+    });
+
     const deadline = Date.now() + timeoutSec * 1000;
 
     const poll = async () => {
       if (Date.now() >= deadline) {
+        if (settled) return;
+        settled = true;
         if (proc.pid) treeKill(proc.pid, "SIGKILL" as any);
         reject(new DevServerTimeoutError(port, timeoutSec));
         return;
@@ -95,14 +104,15 @@ export async function startDevServer(
 
       const status = await probeServerStatus(port);
       if (status !== null) {
-        if (status === 200) {
+        if (status >= 200 && status < 400) {
+          if (settled) return;
+          settled = true;
           console.log(`Dev server ready on port ${port} (HTTP ${status})`);
           resolve({ pid: proc.pid!, port });
-        } else {
-          console.log(`Dev server returned HTTP ${status} — continuing anyway`);
-          resolve({ pid: proc.pid!, port });
+          return;
         }
-        return;
+
+        console.log(`Dev server returned HTTP ${status}, waiting for a healthy app surface...`);
       }
 
       setTimeout(poll, 500);

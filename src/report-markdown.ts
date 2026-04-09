@@ -50,17 +50,29 @@ function formatTimestamp(iso: string): string {
 }
 
 function sentenceForVerdict(view: TierVerificationView): string {
+  const isReleaseTier = view.tier === "pro_plus";
+
   switch (view.verdict) {
     case "release-ready":
-      return "Yes. This run collected enough evidence to support a release-ready call.";
+      return isReleaseTier
+        ? "Yes. This run collected enough evidence to support a release-ready call."
+        : "Yes. The current build looks strong enough to hand to a client.";
     case "hold":
-      return "No. This run found blockers that should be fixed before release.";
+      return isReleaseTier
+        ? "No. This run found blockers that should be fixed before release."
+        : "No. This run found blockers that should be fixed before sending this to a client.";
     case "investigate":
-      return "Not yet. The project is standing, but there is not enough confidence to call it release-ready.";
+      return isReleaseTier
+        ? "Not yet. The project is standing, but there is not enough confidence to call it release-ready."
+        : "Not yet. The project may be usable, but the current evidence is not strong enough for a client handoff.";
     case "build-failed":
-      return "No. The production build failed, so the release should be held immediately.";
+      return isReleaseTier
+        ? "No. The production build failed, so the release should be held immediately."
+        : "No. The production build failed, so this should not be sent to a client.";
     default:
-      return "This run did not find an immediate hard blocker, but it is still a shallow verification pass.";
+      return isReleaseTier
+        ? "This run did not find an immediate hard blocker, but it is still a shallow release-confidence pass."
+        : "This run did not find an immediate hard blocker, but it is still a shallow delivery-confidence pass.";
   }
 }
 
@@ -176,7 +188,95 @@ function renderMetrics(result: MarkdownReportResult): string {
   return `${lines.join("\n")}\n`;
 }
 
-function renderCopyForAI(result: MarkdownReportResult): string {
+type ReportFlavor = "delivery" | "release" | "generic";
+
+function getReportFlavor(view: TierVerificationView): ReportFlavor {
+  switch (view.tier) {
+    case "pro":
+      return "delivery";
+    case "pro_plus":
+      return "release";
+    default:
+      return "generic";
+  }
+}
+
+function sectionTitle(flavor: ReportFlavor, key: string): string {
+  if (flavor === "delivery") {
+    switch (key) {
+      case "title":
+        return "Laxy Verify Delivery Report";
+      case "decision":
+        return "Client Delivery Call";
+      case "evidence":
+        return "Delivery Evidence";
+      case "passes":
+        return "What Looks Ready";
+      case "blockers":
+        return "Client-Facing Blockers";
+      case "warnings":
+        return "Watch Before Delivery";
+      case "nextActions":
+        return "Fix Before Sending";
+      case "recordedEvidence":
+        return "Proof Collected In This Run";
+      case "copy":
+        return "Copy For AI";
+      default:
+        return key;
+    }
+  }
+
+  if (flavor === "release") {
+    switch (key) {
+      case "title":
+        return "Laxy Verify Release Report";
+      case "decision":
+        return "Release Call";
+      case "evidence":
+        return "Release Evidence";
+      case "passes":
+        return "Release Signals That Passed";
+      case "blockers":
+        return "Release Blockers";
+      case "warnings":
+        return "Release Risks To Watch";
+      case "nextActions":
+        return "What Must Happen Next";
+      case "recordedEvidence":
+        return "Evidence Pack";
+      case "copy":
+        return "Copy For AI";
+      default:
+        return key;
+    }
+  }
+
+  switch (key) {
+    case "title":
+      return "Laxy Verify Report";
+    case "decision":
+      return "Decision";
+    case "evidence":
+      return "Verification Evidence";
+    case "passes":
+      return "What Passed";
+    case "blockers":
+      return "Blockers";
+    case "warnings":
+      return "Warnings";
+    case "nextActions":
+      return "Next Actions";
+    case "recordedEvidence":
+      return "Recorded Evidence";
+    case "copy":
+      return "Copy For AI";
+    default:
+      return key;
+  }
+}
+
+function renderCopyForAI(result: MarkdownReportResult, flavor: ReportFlavor): string {
   const view = result.verification?.view;
   if (!view) return "";
 
@@ -191,15 +291,30 @@ function renderCopyForAI(result: MarkdownReportResult): string {
         ? "Collect the missing verification evidence, then rerun the command and compare the new report."
         : "Please fix the blockers first, then rerun the verification command and compare the new report.";
 
+  const openingLine =
+    flavor === "release"
+      ? "Use this release report to decide whether the project is truly ready to ship."
+      : flavor === "delivery"
+        ? "Use this delivery report to fix the project before sending it to a client."
+        : "Use this verification report to fix the project.";
+
+  const targetLine =
+    flavor === "release"
+      ? "Goal: reach a release-ready verdict with strong viewport, visual, and user-flow evidence."
+      : flavor === "delivery"
+        ? "Goal: remove client-visible blockers and reach a confident delivery call."
+        : "Goal: fix the blockers and improve confidence on the next run.";
+
   return [
-    "## Copy For AI",
+    `## ${sectionTitle(flavor, "copy")}`,
     "",
     "```text",
-    "Use this verification report to fix the project.",
+    openingLine,
     "",
     `Plan: ${titleCasePlan(result._plan)}`,
     `Question: ${view.question}`,
     `Verdict: ${titleCaseVerdict(view.verdict)}`,
+    targetLine,
     "",
     "Priority blockers:",
     ...(blockers.length > 0 ? blockers : ["- None listed."]),
@@ -249,9 +364,28 @@ export function buildMarkdownReport(projectDir: string, result: MarkdownReportRe
   );
   const passes = view.passes.map((check) => `${check.passed ? "Passed" : "Failed"}: ${check.label}`);
   const nextActions = defaultNextActions(result);
+  const flavor = getReportFlavor(view);
+  const decisionLead =
+    flavor === "release"
+      ? "This section answers whether the current build is strong enough to call release-ready."
+      : flavor === "delivery"
+        ? "This section answers whether the current build is strong enough to send to a client."
+        : "This section explains the outcome of the current verification run.";
+  const atAGlanceLead =
+    flavor === "release"
+      ? "This report is written for a ship or hold decision."
+      : flavor === "delivery"
+        ? "This report is written for a client handoff decision."
+        : "This report is written for a quick verification summary.";
+  const decisionLabel =
+    flavor === "release"
+      ? "Release recommendation"
+      : flavor === "delivery"
+        ? "Client delivery recommendation"
+        : "Recommendation";
 
   return [
-    "# Laxy Verify Report",
+    `# ${sectionTitle(flavor, "title")}`,
     "",
     `Project: ${projectName}`,
     `Generated: ${formatTimestamp(result.timestamp)}`,
@@ -260,33 +394,38 @@ export function buildMarkdownReport(projectDir: string, result: MarkdownReportRe
     "",
     "## At A Glance",
     "",
+    atAGlanceLead,
+    "",
     `Short answer: ${sentenceForVerdict(view)}`,
     `Why: ${view.summary}`,
     `Recommended next move: ${nextActions[0]}`,
     "",
-    "## Decision",
+    `## ${sectionTitle(flavor, "decision")}`,
+    "",
+    decisionLead,
     "",
     `Question: ${view.question}`,
     `Answer: ${titleCaseVerdict(view.verdict)}`,
     `Verdict: ${titleCaseVerdict(view.verdict)}`,
+    `${decisionLabel}: ${titleCaseVerdict(view.verdict)}`,
     `Confidence: ${view.confidence}`,
     `Grade: ${result.grade}`,
     "",
-    renderMetrics(result).trimEnd(),
+    renderMetrics(result).replace("## Verification Evidence", `## ${sectionTitle(flavor, "evidence")}`).trimEnd(),
     "",
-    renderChecklist("What Passed", passes).trimEnd(),
+    renderChecklist(sectionTitle(flavor, "passes"), passes).trimEnd(),
     "",
-    renderChecklist("Blockers", blockers).trimEnd(),
+    renderChecklist(sectionTitle(flavor, "blockers"), blockers).trimEnd(),
     "",
-    renderChecklist("Warnings", warnings).trimEnd(),
+    renderChecklist(sectionTitle(flavor, "warnings"), warnings).trimEnd(),
     "",
-    renderChecklist("Next Actions", nextActions).trimEnd(),
+    renderChecklist(sectionTitle(flavor, "nextActions"), nextActions).trimEnd(),
     "",
-    renderChecklist("Recorded Evidence", view.failureEvidence).trimEnd(),
+    renderChecklist(sectionTitle(flavor, "recordedEvidence"), view.failureEvidence).trimEnd(),
     "",
     renderBuildErrors(result.build.errors).trimEnd(),
     renderE2EFailures(result).trimEnd(),
-    renderCopyForAI(result).trimEnd(),
+    renderCopyForAI(result, flavor).trimEnd(),
     "",
   ]
     .filter(Boolean)

@@ -28,7 +28,9 @@ export interface VerificationInput {
   buildErrors?: string[];
   e2ePassed?: number;
   e2eTotal?: number;
+  e2eCoverageGaps?: string[];
   lighthouseSkipped?: boolean;
+  lighthouseErrorCount?: number;
   viewportIssues?: number;
   multiViewportPassed?: boolean;
   multiViewportSummary?: string;
@@ -64,6 +66,7 @@ export interface VerificationEvidence {
   hasMultiViewportData: boolean;
   multiViewportPassed: boolean;
   hasVisualDiffData: boolean;
+  hasComparableVisualDiffData: boolean;
   visualDiffPassed: boolean;
   lighthousePassed: boolean;
 }

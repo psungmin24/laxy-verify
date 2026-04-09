@@ -12,7 +12,14 @@ import { generateBadge } from "./badge.js";
 import { postPRComment } from "./comment.js";
 import { createStatusCheck } from "./status.js";
 import { login, clearToken, whoami } from "./auth.js";
-import { getEntitlements, printPlanBanner, type EntitlementFeatures } from "./entitlement.js";
+import {
+  applyPlanOverride,
+  getEntitlements,
+  normalizePlan,
+  printPlanBanner,
+  type EntitlementFeatures,
+  type TestablePlan,
+} from "./entitlement.js";
 import { runMultiViewportLighthouse, printMultiViewportResults, allViewportsPass } from "./multi-viewport.js";
 import { runVerifyE2E, type E2EScenarioResult } from "./e2e.js";
 import { buildMarkdownReport, getMarkdownReportPath, shouldWriteMarkdownReport } from "./report-markdown.js";
@@ -40,6 +47,7 @@ interface CLIArgs {
   initRun: boolean;
   multiViewport: boolean;
   failureAnalysis: boolean;
+  planOverride?: TestablePlan;
   help: boolean;
 }
 
@@ -63,6 +71,16 @@ interface LaxyResult {
     report: VerificationReport;
     view: TierVerificationView;
   };
+}
+
+function shouldFailVerificationResult(
+  report: VerificationReport,
+  failOn: FailOn
+): boolean {
+  if (failOn === "unverified") return false;
+  if (report.verdict === "build-failed" || report.verdict === "hold") return true;
+  if (report.tier === "pro_plus" && report.verdict === "investigate") return true;
+  return isWorseOrEqual(report.grade, failOn);
 }
 
 function exitGracefully(code: number): void {
@@ -129,6 +147,7 @@ function parseArgs(): CLIArgs {
     initRun: flags.init !== undefined && flags.run !== undefined,
     multiViewport: flags["multi-viewport"] !== undefined,
     failureAnalysis: flags["failure-analysis"] !== undefined,
+    planOverride: flags["plan-override"] as TestablePlan | undefined,
     help: flags.help !== undefined || flags.h !== undefined,
   };
 }
@@ -270,6 +289,7 @@ async function run(): Promise<void> {
     --config <path>   Path to .laxy.yml
     --fail-on         unverified | bronze | silver | gold
     --skip-lighthouse Skip Lighthouse but still run build and E2E
+    --plan-override   free | pro | pro_plus (downgrade testing only)
     --multi-viewport  Pro+: Lighthouse on desktop/tablet/mobile
     --badge           Print shields.io badge markdown
     --help            Show this help
@@ -382,6 +402,7 @@ async function run(): Promise<void> {
 
   let scores: LighthouseScores | undefined;
   let lighthouseResult: LaxyResult["lighthouse"] = null;
+  let lighthouseErrorCount = 0;
   const adjustedThresholds = {
     performance: config.ciMode ? config.thresholds.performance - 10 : config.thresholds.performance,
     accessibility: config.thresholds.accessibility,
@@ -407,13 +428,28 @@ async function run(): Promise<void> {
     fast_lane: false,
   };
 
-  if (features.lighthouse_runs_3 && config.lighthouse_runs < 3) {
+  let effectiveFeatures = features;
+  if (args.planOverride) {
+    try {
+      effectiveFeatures = applyPlanOverride(features, args.planOverride);
+      console.log(
+        `  Plan override: ${normalizePlan(features.plan)} -> ${effectiveFeatures.plan} (testing lower-tier verification behavior)`
+      );
+    } catch (overrideErr) {
+      console.error(`Plan override error: ${overrideErr instanceof Error ? overrideErr.message : String(overrideErr)}`);
+      exitGracefully(2);
+      return;
+    }
+  }
+
+  if (effectiveFeatures.lighthouse_runs_3 && config.lighthouse_runs < 3) {
     config = { ...config, lighthouse_runs: 3 };
   }
 
   let multiViewportScores = null;
   let allViewportsOk = false;
   let e2eResult: LaxyResult["e2e"] | undefined;
+  let e2eCoverageGaps: string[] = [];
   let visualDiffResult: VisualDiffResult | null = null;
 
   if (buildResult.success) {
@@ -422,11 +458,12 @@ async function run(): Promise<void> {
       const serve = await startDevServer(devCmd, port, config.dev_timeout, args.projectDir);
       servePid = serve.pid;
       const verifyUrl = `http://127.0.0.1:${port}/`;
-      const verificationTier = planToVerificationTier(features.plan);
+      const verificationTier = planToVerificationTier(effectiveFeatures.plan);
 
       if (!args.skipLighthouse) {
         try {
           const lhResult = await runLighthouse(port, config.lighthouse_runs);
+          lighthouseErrorCount = lhResult.errors.length;
           scores = lhResult.scores ?? undefined;
           if (scores) {
             lighthouseResult = {
@@ -442,9 +479,9 @@ async function run(): Promise<void> {
         }
       }
 
-      if (!args.skipLighthouse && args.multiViewport && !features.multi_viewport) {
+      if (!args.skipLighthouse && args.multiViewport && !effectiveFeatures.multi_viewport) {
         console.log("\n  Note: --multi-viewport requires Pro+. Run laxy-verify login with a paid account to unlock it.");
-      } else if (!args.skipLighthouse && features.multi_viewport) {
+      } else if (!args.skipLighthouse && effectiveFeatures.multi_viewport) {
         try {
           multiViewportScores = await runMultiViewportLighthouse(port);
           printMultiViewportResults(multiViewportScores, adjustedThresholds);
@@ -462,6 +499,10 @@ async function run(): Promise<void> {
           total: e2eRuns.results.length,
           results: e2eRuns.results,
         };
+        e2eCoverageGaps = e2eRuns.coverageGaps;
+        if (e2eRuns.coverageGaps.length > 0) {
+          console.error(`E2E coverage warning: ${e2eRuns.coverageGaps.join(" ")}`);
+        }
       } catch (e2eErr) {
         console.error(`E2E error: ${e2eErr instanceof Error ? e2eErr.message : String(e2eErr)}`);
       }
@@ -482,16 +523,18 @@ async function run(): Promise<void> {
     }
   }
 
-  const verificationTier = planToVerificationTier(features.plan);
+  const verificationTier = planToVerificationTier(effectiveFeatures.plan);
   const viewportSummary = summarizeViewportIssues(multiViewportScores, adjustedThresholds);
   const failureEvidence = [
     ...buildResult.errors.slice(0, 3).map((error) => `Build: ${error}`),
+    ...(lighthouseErrorCount > 0 ? [`Lighthouse: ${lighthouseErrorCount} run error(s) were recorded during collection.`] : []),
     ...(e2eResult
       ? e2eResult.results
           .filter((scenario) => !scenario.passed)
           .slice(0, 2)
           .map((scenario) => `E2E: ${scenario.name}${scenario.error ? ` - ${scenario.error}` : ""}`)
       : []),
+    ...e2eCoverageGaps.slice(0, 2).map((gap) => `E2E coverage: ${gap}`),
     ...(viewportSummary.count > 0 && viewportSummary.summary ? [`Viewport: ${viewportSummary.summary}`] : []),
     ...(visualDiffResult
       ? [
@@ -508,7 +551,9 @@ async function run(): Promise<void> {
       buildErrors: buildResult.errors,
       e2ePassed: e2eResult?.passed,
       e2eTotal: e2eResult?.total,
+      e2eCoverageGaps,
       lighthouseSkipped: args.skipLighthouse,
+      lighthouseErrorCount,
       viewportIssues: multiViewportScores ? viewportSummary.count : undefined,
       multiViewportPassed: multiViewportScores ? allViewportsOk : undefined,
       multiViewportSummary: multiViewportScores ? viewportSummary.summary : undefined,
@@ -526,12 +571,7 @@ async function run(): Promise<void> {
 
   const verificationView = getTierVerificationView(verificationReport);
   const unifiedGrade = verificationReport.grade;
-  const exitCode =
-    config.fail_on === "unverified"
-      ? 0
-      : isWorseOrEqual(unifiedGrade, config.fail_on)
-        ? 1
-        : 0;
+  const exitCode = shouldFailVerificationResult(verificationReport, config.fail_on) ? 1 : 0;
 
   const resultObj: LaxyResult = {
     grade: unifiedGrade.charAt(0).toUpperCase() + unifiedGrade.slice(1),
@@ -549,7 +589,7 @@ async function run(): Promise<void> {
     framework: detected.framework,
     exitCode,
     config_fail_on: config.fail_on,
-    _plan: features.plan,
+    _plan: effectiveFeatures.plan,
     verification: {
       tier: verificationTier,
       report: verificationReport,

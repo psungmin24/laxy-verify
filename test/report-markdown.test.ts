@@ -60,7 +60,7 @@ describe("report markdown", () => {
     ).toBe(false);
   });
 
-  it("renders an easy-to-scan Pro report with blocker and AI sections", () => {
+  it("renders a delivery-oriented Pro report with client handoff language", () => {
     const markdown = buildMarkdownReport("C:\\workspace\\contents-factory", {
       grade: "Bronze",
       timestamp: "2026-04-09T12:00:00.000Z",
@@ -145,15 +145,20 @@ describe("report markdown", () => {
       },
     });
 
-    expect(markdown).toContain("# Laxy Verify Report");
+    expect(markdown).toContain("# Laxy Verify Delivery Report");
     expect(markdown).toContain("Question: Is this strong enough to send to a client?");
-    expect(markdown).toContain("## Blockers");
+    expect(markdown).toContain("## Client Delivery Call");
+    expect(markdown).toContain("Client delivery recommendation: Hold");
+    expect(markdown).toContain("## Client-Facing Blockers");
+    expect(markdown).toContain("## Fix Before Sending");
     expect(markdown).toContain("## Failed E2E Scenarios");
     expect(markdown).toContain("## Copy For AI");
+    expect(markdown).toContain("Use this delivery report to fix the project before sending it to a client.");
+    expect(markdown).toContain("Goal: remove client-visible blockers and reach a confident delivery call.");
     expect(markdown).toContain("Fix the broken user flow and rerun the verification scenarios.");
   });
 
-  it("renders Pro+ evidence sections clearly", () => {
+  it("renders a release-oriented Pro+ report with stronger approval language", () => {
     const markdown = buildMarkdownReport("C:\\workspace\\contents-factory", {
       grade: "Gold",
       timestamp: "2026-04-09T12:00:00.000Z",
@@ -225,10 +230,17 @@ describe("report markdown", () => {
       },
     });
 
+    expect(markdown).toContain("# Laxy Verify Release Report");
     expect(markdown).toContain("Plan: Pro+");
     expect(markdown).toContain("Short answer: Yes. This run collected enough evidence to support a release-ready call.");
+    expect(markdown).toContain("## Release Call");
+    expect(markdown).toContain("Release recommendation: Release Ready");
+    expect(markdown).toContain("## Release Evidence");
+    expect(markdown).toContain("## Evidence Pack");
     expect(markdown).toContain("| Multi-viewport | Passed");
     expect(markdown).toContain("| Visual diff | 0% (pass) |");
+    expect(markdown).toContain("Use this release report to decide whether the project is truly ready to ship.");
+    expect(markdown).toContain("Goal: reach a release-ready verdict with strong viewport, visual, and user-flow evidence.");
     expect(markdown).toContain("Use this as release evidence, or rerun after any code change that could affect quality.");
   });
 });

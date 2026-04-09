@@ -70,8 +70,9 @@ export function buildVerificationEvidence(
       (input.multiViewportPassed !== false && (input.viewportIssues ?? 0) <= 0)
     : false;
   const hasVisualDiffData = typeof input.visualDiffVerdict === "string";
+  const hasComparableVisualDiffData = hasVisualDiffData && input.hasVisualBaseline === true;
   const visualDiffPassed =
-    hasVisualDiffData &&
+    hasComparableVisualDiffData &&
     input.visualDiffVerdict !== "warn" &&
     input.visualDiffVerdict !== "rollback";
   const lighthousePassed = getLighthousePass(input.lighthouseScores, thresholds);
@@ -87,6 +88,7 @@ export function buildVerificationEvidence(
     hasMultiViewportData,
     multiViewportPassed,
     hasVisualDiffData,
+    hasComparableVisualDiffData,
     visualDiffPassed,
     lighthousePassed,
   };
@@ -147,12 +149,23 @@ export function getImprovementRecommendations(
     input.e2eTotal > 0 &&
     input.e2ePassed < input.e2eTotal
   ) {
+    const failedCount = input.e2eTotal - input.e2ePassed;
     findings.push({
       category: "e2e",
       severity: "high",
-      title: `E2E failures (${input.e2ePassed}/${input.e2eTotal})`,
+      title: `E2E failures (${failedCount}/${input.e2eTotal})`,
       description: "One or more verification scenarios failed.",
       action: "Fix the broken user flow and rerun the verification scenarios.",
+    });
+  }
+
+  if ((input.e2eCoverageGaps?.length ?? 0) > 0) {
+    findings.push({
+      category: "e2e",
+      severity: "high",
+      title: `Verification coverage gaps (${input.e2eCoverageGaps?.length ?? 0})`,
+      description: input.e2eCoverageGaps!.join(" "),
+      action: "Add or expose a stable primary user flow, then rerun verification so the paid checks cover real interactions.",
     });
   }
 
@@ -189,6 +202,16 @@ export function getImprovementRecommendations(
       title: `Visual change needs review (${input.visualDiffPercentage ?? 0}%)`,
       description: "The visual diff changed enough to require a manual review before release.",
       action: "Check the visual diff and confirm the UI change is intentional.",
+    });
+  }
+
+  if ((input.lighthouseErrorCount ?? 0) > 0) {
+    findings.push({
+      category: "performance",
+      severity: "medium",
+      title: `Lighthouse instability detected (${input.lighthouseErrorCount})`,
+      description: "One or more Lighthouse runs errored even though a report was recovered.",
+      action: "Rerun Lighthouse and inspect the failing run logs before trusting this result in CI.",
     });
   }
 
@@ -304,7 +327,9 @@ export function buildVerificationReport(
     evidence.e2ePassedAll &&
     evidence.lighthousePassed &&
     evidence.hasMultiViewportData &&
-    evidence.multiViewportPassed
+    evidence.multiViewportPassed &&
+    evidence.hasComparableVisualDiffData &&
+    evidence.visualDiffPassed
   ) {
     verdict = "release-ready";
     confidence = "high";
@@ -314,11 +339,14 @@ export function buildVerificationReport(
     evidence.buildPassed &&
     evidence.e2ePassedAll &&
     evidence.lighthousePassed &&
-    !evidence.hasMultiViewportData
+    (!evidence.hasMultiViewportData || !evidence.hasComparableVisualDiffData)
   ) {
     verdict = "investigate";
     confidence = "medium";
-    summary = "Core checks passed, but release-ready confidence still needs multi-viewport verification evidence.";
+    const missingEvidence: string[] = [];
+    if (!evidence.hasMultiViewportData) missingEvidence.push("multi-viewport evidence");
+    if (!evidence.hasComparableVisualDiffData) missingEvidence.push("visual diff evidence");
+    summary = `Core checks passed, but release-ready confidence still needs ${missingEvidence.join(" and ")}.`;
   } else if (tier === "free") {
     verdict = "quick-pass";
     confidence = evidence.hasLighthouseData && evidence.lighthousePassed ? "medium" : "low";
@@ -349,7 +377,7 @@ export function buildVerificationReport(
           label: input.hasVisualBaseline
             ? `Visual diff ${input.visualDiffPercentage ?? 0}%`
             : "Visual baseline seeded",
-          passed: input.visualDiffVerdict !== "rollback",
+          passed: evidence.visualDiffPassed,
         }]
       : []),
     ...(evidence.hasLighthouseData
