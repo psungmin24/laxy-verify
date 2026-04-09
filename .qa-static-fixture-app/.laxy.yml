@@ -1,0 +1,9 @@
+port: 3310
+build_command: node build.js
+dev_command: node server.js
+fail_on: bronze
+thresholds:
+  performance: 50
+  accessibility: 70
+  seo: 50
+  best_practices: 70

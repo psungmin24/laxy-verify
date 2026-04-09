@@ -1,21 +1,13 @@
 /**
  * Pro+ multi-viewport Lighthouse checks.
  *
- * This runs one Lighthouse collection per viewport and summarizes the results
- * for desktop, tablet, and mobile. The median logic is kept so the output
- * shape stays compatible with the existing verification report flow.
+ * Each viewport runs through the same direct Lighthouse execution path used by
+ * the main verify flow so Windows cleanup behavior is consistent.
  */
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { createRequire } from "node:module";
 import type { LighthouseScores } from "./grade.js";
-
-const req = createRequire(__filename);
-
-function resolveLhciBin(): string {
-  return req.resolve("@lhci/cli/src/cli.js");
-}
 
 export interface ViewportScores {
   desktop: LighthouseScores | null;
@@ -25,99 +17,192 @@ export interface ViewportScores {
 
 interface ViewportDef {
   name: "desktop" | "tablet" | "mobile";
-  preset: string;
-  screenEmulation?: string;
+  formFactor: "desktop" | "mobile";
+  screen: {
+    mobile: boolean;
+    width: number;
+    height: number;
+    deviceScaleFactor: number;
+    disabled: boolean;
+  };
 }
 
 const VIEWPORTS: ViewportDef[] = [
-  { name: "desktop", preset: "desktop" },
-  { name: "tablet", preset: "desktop", screenEmulation: "1024x768" },
-  { name: "mobile", preset: "perf" },
+  {
+    name: "desktop",
+    formFactor: "desktop",
+    screen: { mobile: false, width: 1350, height: 940, deviceScaleFactor: 1, disabled: false },
+  },
+  {
+    name: "tablet",
+    formFactor: "desktop",
+    screen: { mobile: false, width: 1024, height: 768, deviceScaleFactor: 1, disabled: false },
+  },
+  {
+    name: "mobile",
+    formFactor: "mobile",
+    screen: { mobile: true, width: 390, height: 844, deviceScaleFactor: 2, disabled: false },
+  },
 ];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function removeDirWithRetries(dirPath: string, retries = 5): Promise<void> {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      if (fs.existsSync(dirPath)) {
+        fs.rmSync(dirPath, { recursive: true, force: true });
+      }
+      return;
+    } catch {
+      if (attempt === retries - 1) return;
+      await sleep(250);
+    }
+  }
+}
+
+function writeViewportRunnerScript(runnerPath: string): void {
+  const source = `import fs from "node:fs/promises";
+import lighthouse from "lighthouse";
+import { launch } from "chrome-launcher";
+
+const [url, reportPath, chromeDir, formFactor, screenJson] = process.argv.slice(2);
+const screen = JSON.parse(screenJson);
+
+const chrome = await launch({
+  logLevel: "error",
+  chromeFlags: [
+    "--headless=new",
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    \`--user-data-dir=\${chromeDir}\`,
+  ],
+});
+
+try {
+  const result = await lighthouse(
+    url,
+    {
+      port: chrome.port,
+      output: "json",
+      logLevel: "error",
+      onlyCategories: ["performance", "accessibility", "seo", "best-practices"],
+    },
+    {
+      extends: "lighthouse:default",
+      settings: {
+        formFactor,
+        screenEmulation: screen,
+      },
+    }
+  );
+
+  if (!result?.lhr) {
+    throw new Error("Lighthouse returned no report.");
+  }
+
+  await fs.writeFile(reportPath, JSON.stringify(result.lhr), "utf8");
+} finally {
+  await chrome.kill();
+}
+`;
+
+  fs.writeFileSync(runnerPath, source, "utf-8");
+}
 
 async function runLighthouseForViewport(
   port: number,
   viewport: ViewportDef,
-  outputDir: string
+  tempRoot: string
 ): Promise<LighthouseScores | null> {
-  const lhciBin = resolveLhciBin();
-  const vpDir = path.join(outputDir, viewport.name);
-  if (!fs.existsSync(vpDir)) fs.mkdirSync(vpDir, { recursive: true });
+  const runnerPath = path.join(tempRoot, "run-viewport-lighthouse.mjs");
+  const reportPath = path.join(tempRoot, `${viewport.name}.json`);
+  const chromeDir = path.join(tempRoot, `chrome-${viewport.name}`);
 
-  const args = [
-    lhciBin,
-    "collect",
-    `--url=http://localhost:${port}`,
-    "--numberOfRuns=1",
-    `--outputDir=${vpDir}`,
-    `--preset=${viewport.preset}`,
-  ];
+  writeViewportRunnerScript(runnerPath);
+  fs.mkdirSync(chromeDir, { recursive: true });
 
-  const child = spawn("node", args, { shell: false, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(
+    "node",
+    [
+      runnerPath,
+      `http://127.0.0.1:${port}/`,
+      reportPath,
+      chromeDir,
+      viewport.formFactor,
+      JSON.stringify(viewport.screen),
+    ],
+    {
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        TEMP: tempRoot,
+        TMP: tempRoot,
+        TMPDIR: tempRoot,
+      },
+    }
+  );
 
   child.stdout?.on("data", (chunk: Buffer) => {
     const lines = chunk.toString().split("\n").filter(Boolean);
-    for (const line of lines) console.log(`    [lhci:${viewport.name}] ${line}`);
+    for (const line of lines) console.log(`    [lh:${viewport.name}] ${line}`);
   });
 
   child.stderr?.on("data", (chunk: Buffer) => {
     const lines = chunk.toString().split("\n").filter(Boolean);
-    for (const line of lines) console.error(`    [lhci:${viewport.name}] ${line}`);
+    for (const line of lines) console.error(`    [lh:${viewport.name}] ${line}`);
   });
 
   const code = await new Promise<number>((resolve) => child.on("exit", (exitCode) => resolve(exitCode ?? 1)));
-  if (code !== 0) return null;
+  if (code !== 0 || !fs.existsSync(reportPath)) {
+    await removeDirWithRetries(chromeDir);
+    return null;
+  }
 
   try {
-    const files = fs.readdirSync(vpDir).filter((file) => file.startsWith("lhr-") && file.endsWith(".json"));
-    if (files.length === 0) return null;
-
-    const scores: LighthouseScores[] = files.map((file) => {
-      const lhr = JSON.parse(fs.readFileSync(path.join(vpDir, file), "utf-8")) as {
-        categories: {
-          performance?: { score: number };
-          accessibility?: { score: number };
-          seo?: { score: number };
-          "best-practices"?: { score: number };
-        };
+    const lhr = JSON.parse(fs.readFileSync(reportPath, "utf-8")) as {
+      categories: {
+        performance?: { score: number };
+        accessibility?: { score: number };
+        seo?: { score: number };
+        "best-practices"?: { score: number };
       };
-      return {
-        performance: Math.round((lhr.categories.performance?.score ?? 0) * 100),
-        accessibility: Math.round((lhr.categories.accessibility?.score ?? 0) * 100),
-        seo: Math.round((lhr.categories.seo?.score ?? 0) * 100),
-        bestPractices: Math.round((lhr.categories["best-practices"]?.score ?? 0) * 100),
-      };
-    });
-
-    const median = (values: number[]) => {
-      const sorted = [...values].sort((a, b) => a - b);
-      const mid = Math.floor(sorted.length / 2);
-      return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
     };
 
     return {
-      performance: median(scores.map((score) => score.performance)),
-      accessibility: median(scores.map((score) => score.accessibility)),
-      seo: median(scores.map((score) => score.seo)),
-      bestPractices: median(scores.map((score) => score.bestPractices)),
+      performance: Math.round((lhr.categories.performance?.score ?? 0) * 100),
+      accessibility: Math.round((lhr.categories.accessibility?.score ?? 0) * 100),
+      seo: Math.round((lhr.categories.seo?.score ?? 0) * 100),
+      bestPractices: Math.round((lhr.categories["best-practices"]?.score ?? 0) * 100),
     };
   } catch {
     return null;
+  } finally {
+    await removeDirWithRetries(chromeDir);
   }
 }
 
 export async function runMultiViewportLighthouse(port: number): Promise<ViewportScores> {
   console.log("\n  [Pro+] Running multi-viewport Lighthouse checks (desktop, tablet, mobile)...");
 
-  const outputDir = ".lighthouseci-mvp";
+  const tempRoot = path.join(process.cwd(), ".laxy-tmp", `multi-viewport-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  fs.mkdirSync(tempRoot, { recursive: true });
+
   const results: ViewportScores = { desktop: null, tablet: null, mobile: null };
 
-  for (const viewport of VIEWPORTS) {
-    console.log(`\n    Viewport: ${viewport.name}`);
-    results[viewport.name] = await runLighthouseForViewport(port, viewport, outputDir);
-  }
+  try {
+    for (const viewport of VIEWPORTS) {
+      console.log(`\n    Viewport: ${viewport.name}`);
+      results[viewport.name] = await runLighthouseForViewport(port, viewport, tempRoot);
+    }
 
-  return results;
+    return results;
+  } finally {
+    await removeDirWithRetries(tempRoot);
+  }
 }
 
 export function printMultiViewportResults(

@@ -7,3 +7,8 @@ dist
 .lighthouseci/
 .qa-fixture-app/.next/
 .qa-fixture-app/.laxy-result.json
+.qa-fixture-app/.laxy-verify/
+.qa-static-fixture-app/.laxy-result.json
+.qa-static-fixture-app/.laxy-verify/
+.qa-static-fixture-app/dist/
+.qa-installed-*/

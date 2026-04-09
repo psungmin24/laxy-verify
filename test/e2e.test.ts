@@ -46,4 +46,20 @@ describe("verify e2e builder", () => {
 
     expect(names).toContain("Validation feedback");
   });
+
+  it("prefers status surfaces over alert surfaces for primary success feedback", () => {
+    const scenarios = buildVerifyScenarios(
+      buildSnapshot([
+        "input[type='email']",
+        "input[required]",
+        "button[type='submit']",
+        "[role='alert']",
+        "[role='status']",
+      ]),
+      "pro_plus"
+    );
+
+    const primary = scenarios.find((scenario) => scenario.name === "Primary form interaction");
+    expect(primary?.steps.at(-1)?.selector).toBe("[role='status']");
+  });
 });

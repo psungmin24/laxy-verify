@@ -2,7 +2,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import puppeteer from "puppeteer";
 import { PNG } from "pngjs";
-import pixelmatch from "pixelmatch";
 
 export interface VisualDiffResult {
   hasBaseline: boolean;
@@ -32,11 +31,29 @@ async function captureScreenshot(url: string, outputPath: string): Promise<void>
   }
 }
 
-function compareImages(
+async function loadPixelmatch(): Promise<
+  (
+    img1: Uint8Array | Buffer,
+    img2: Uint8Array | Buffer,
+    output: Uint8Array | Buffer,
+    width: number,
+    height: number,
+    options?: { threshold?: number }
+  ) => number
+> {
+  const dynamicImport = new Function(
+    "specifier",
+    "return import(specifier)"
+  ) as (specifier: string) => Promise<{ default: (...args: any[]) => number }>;
+  const mod = await dynamicImport("pixelmatch");
+  return mod.default;
+}
+
+async function compareImages(
   baselinePath: string,
   currentPath: string,
   diffOutputPath: string
-): { diffPixels: number; totalPixels: number; diffPercentage: number } {
+): Promise<{ diffPixels: number; totalPixels: number; diffPercentage: number }> {
   const baselinePng = PNG.sync.read(fs.readFileSync(baselinePath));
   const currentPng = PNG.sync.read(fs.readFileSync(currentPath));
 
@@ -55,6 +72,7 @@ function compareImages(
   const baseData = cropData(baselinePng, width, height);
   const currData = cropData(currentPng, width, height);
   const diff = new PNG({ width, height });
+  const pixelmatch = await loadPixelmatch();
   const diffPixels = pixelmatch(baseData, currData, diff.data, width, height, { threshold: 0.1 });
 
   ensureDir(path.dirname(diffOutputPath));
@@ -89,7 +107,7 @@ export async function runVisualDiff(projectDir: string, url: string, label = "cu
     };
   }
 
-  const comparison = compareImages(baselinePath, currentPath, diffPath);
+  const comparison = await compareImages(baselinePath, currentPath, diffPath);
   let verdict: "pass" | "warn" | "rollback" = "pass";
   if (comparison.diffPercentage >= 60) {
     verdict = "rollback";

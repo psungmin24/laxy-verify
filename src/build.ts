@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import treeKill from "tree-kill";
 
 export interface BuildResult {
@@ -30,11 +30,21 @@ export function runBuild(
 
     console.log(`\n Building: ${command}${cwd ? ` (cwd: ${cwd})` : ""}`);
 
-    const proc = spawn(command, {
-      shell: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      cwd,
-    });
+    const proc =
+      process.platform === "win32"
+        ? spawn(
+            process.env.ComSpec || "cmd.exe",
+            ["/d", "/c", command],
+            {
+              stdio: ["ignore", "pipe", "pipe"],
+              cwd,
+            }
+          )
+        : spawn(command, {
+            shell: true,
+            stdio: ["ignore", "pipe", "pipe"],
+            cwd,
+          });
 
     let timedOut = false;
     const timer = setTimeout(() => {

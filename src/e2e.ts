@@ -95,9 +95,9 @@ function getFillTarget(selectors: string[]): string | undefined {
 
 function getFeedbackTarget(selectors: string[]): string | undefined {
   return pickSelector(selectors, [
-    /^\[role=['"]alert['"]\]$/,
     /^\[role=['"]status['"]\]$/,
     /^\[aria-live=['"](polite|assertive)['"]\]$/,
+    /^\[role=['"]alert['"]\]$/,
     /^\[data-testid.*(error|success|toast|alert|notice|result)/,
     /^\.(error|alert|toast|notice|success|status)/,
   ]);

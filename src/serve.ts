@@ -46,12 +46,23 @@ export async function startDevServer(
   return new Promise((resolve, reject) => {
     console.log(`Starting dev server: ${command}${cwd ? ` (cwd: ${cwd})` : ""}`);
 
-    const proc = spawn(command, {
-      shell: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, PORT: String(port) },
-      cwd,
-    });
+    const proc =
+      process.platform === "win32"
+        ? spawn(
+            process.env.ComSpec || "cmd.exe",
+            ["/d", "/c", command],
+            {
+              stdio: ["ignore", "pipe", "pipe"],
+              env: { ...process.env, PORT: String(port) },
+              cwd,
+            }
+          )
+        : spawn(command, {
+            shell: true,
+            stdio: ["ignore", "pipe", "pipe"],
+            env: { ...process.env, PORT: String(port) },
+            cwd,
+          });
 
     // Pipe output to console
     proc.stdout?.on("data", (chunk: Buffer) => {
