@@ -3,6 +3,11 @@
 CLI verification for frontend apps.
 
 `laxy-verify` runs production build checks, Lighthouse, tiered verify E2E, and plan-gated verification features for Free, Pro, and Pro+ accounts.
+It is designed around three user questions:
+
+- Free: "Is this likely to break right now?"
+- Pro: "Is this strong enough to send to a client?"
+- Pro+: "Can I call this release-ready with confidence?"
 
 ```bash
 npx laxy-verify --init --run
@@ -71,6 +76,9 @@ npx laxy-verify logout
 | Visual diff | No | No | Yes |
 | Failure analysis signals | No | No | Yes |
 
+Pro is for delivery verification.
+Pro+ is for release-confidence verification with extra evidence before you say "ship it."
+
 For CI, set `LAXY_TOKEN` instead of using interactive login.
 
 ```yaml
@@ -129,13 +137,25 @@ Each run writes `.laxy-result.json`.
 
 ```json
 {
-  "grade": "Silver",
+  "grade": "Gold",
   "timestamp": "2026-04-09T09:00:00Z",
   "build": { "success": true, "durationMs": 12000, "errors": [] },
-  "e2e": { "passed": 4, "failed": 0, "total": 4, "results": [] },
+  "e2e": { "passed": 5, "failed": 0, "total": 5, "results": [] },
   "lighthouse": { "performance": 82, "accessibility": 94, "seo": 90, "bestPractices": 92, "runs": 3 },
+  "multiViewport": {
+    "allPassed": true,
+    "summary": "Desktop, tablet, and mobile checks passed."
+  },
+  "visualDiff": {
+    "verdict": "pass",
+    "differencePercentage": 0
+  },
+  "verification": {
+    "tier": "pro_plus",
+    "report": { "verdict": "release-ready" }
+  },
   "exitCode": 0,
-  "_plan": "pro"
+  "_plan": "pro_plus"
 }
 ```
 
@@ -144,6 +164,7 @@ Each run writes `.laxy-result.json`.
 - Monorepos require targeting the app subdirectory explicitly.
 - Dev-server-based Lighthouse can differ from production hosting.
 - Pro+ visual diff and viewport checks increase runtime.
+- Local verification is most stable on current LTS Node releases.
 
 ## License
 

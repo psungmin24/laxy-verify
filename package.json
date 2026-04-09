@@ -1,7 +1,7 @@
 {
   "name": "laxy-verify",
-  "version": "1.1.13",
-  "description": "Frontend quality gate: build + Lighthouse verification",
+  "version": "1.1.14",
+  "description": "Frontend quality gate: build, Lighthouse, tiered E2E, and release-confidence verification",
   "license": "MIT",
   "type": "commonjs",
   "bin": {
