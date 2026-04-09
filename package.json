@@ -1,6 +1,6 @@
 {
   "name": "laxy-verify",
-  "version": "1.1.9",
+  "version": "1.1.10",
   "description": "Frontend quality gate: build + Lighthouse verification",
   "license": "MIT",
   "type": "commonjs",
@@ -20,6 +20,7 @@
     "@lhci/cli": "^0.14.0",
     "chrome-launcher": "^0.13.4",
     "js-yaml": "^4.1.0",
+    "laxy-verify": "^1.1.10",
     "lighthouse": "^12.1.0",
     "pixelmatch": "^7.1.0",
     "pngjs": "^7.0.0",
