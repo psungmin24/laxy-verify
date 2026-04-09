@@ -50,13 +50,18 @@ export function calculateGrade(options: {
     bestPractices: number;
   };
   failOn: VerificationGrade;
+  /** Pro+ 전용: true면 Gold 달성 가능 (모든 뷰포트 Lighthouse 통과 시) */
+  goldEligible?: boolean;
 }): GradeResult {
-  const { buildSuccess, scores, thresholds, failOn } = options;
+  const { buildSuccess, scores, thresholds, failOn, goldEligible = false } = options;
 
   let grade: VerificationGrade;
 
   if (!buildSuccess) {
     grade = "unverified";
+  } else if (goldEligible && scores && getLighthousePass(scores, thresholds)) {
+    // Pro+: 모든 뷰포트 Lighthouse 통과 → Gold
+    grade = "gold";
   } else if (scores && getLighthousePass(scores, thresholds)) {
     grade = "silver";
   } else if (buildSuccess) {

@@ -20,16 +20,21 @@ export class BuildError extends Error {
 
 export function runBuild(
   command: string,
-  timeoutSec: number
+  timeoutSec: number,
+  cwd?: string
 ): Promise<BuildResult> {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
     const stderrLines: string[] = [];
     const errorLines: string[] = [];
 
-    console.log(`\n Building: ${command}`);
+    console.log(`\n Building: ${command}${cwd ? ` (cwd: ${cwd})` : ""}`);
 
-    const proc = spawn(command, { shell: true, stdio: ["ignore", "pipe", "pipe"] });
+    const proc = spawn(command, {
+      shell: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      cwd,
+    });
 
     let timedOut = false;
     const timer = setTimeout(() => {

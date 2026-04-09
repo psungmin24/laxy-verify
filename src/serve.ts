@@ -33,18 +33,24 @@ function httpGet(url: string): Promise<number | null> {
   });
 }
 
+export function probeServerStatus(port: number): Promise<number | null> {
+  return httpGet(`http://localhost:${port}/`);
+}
+
 export async function startDevServer(
   command: string,
   port: number,
-  timeoutSec: number
+  timeoutSec: number,
+  cwd?: string
 ): Promise<ServeResult> {
   return new Promise((resolve, reject) => {
-    console.log(`Starting dev server: ${command}`);
+    console.log(`Starting dev server: ${command}${cwd ? ` (cwd: ${cwd})` : ""}`);
 
     const proc = spawn(command, {
       shell: true,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, PORT: String(port) },
+      cwd,
     });
 
     // Pipe output to console
@@ -76,7 +82,7 @@ export async function startDevServer(
         return;
       }
 
-      const status = await httpGet(`http://localhost:${port}/`);
+      const status = await probeServerStatus(port);
       if (status !== null) {
         if (status === 200) {
           console.log(`Dev server ready on port ${port} (HTTP ${status})`);

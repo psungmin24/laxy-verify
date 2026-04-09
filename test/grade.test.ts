@@ -60,6 +60,66 @@ describe("calculateGrade", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  it("returns gold when goldEligible=true and LH passes", () => {
+    const result = calculateGrade({
+      buildSuccess: true,
+      scores,
+      thresholds,
+      failOn: "bronze",
+      goldEligible: true,
+    });
+    expect(result.grade).toBe("gold");
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("returns silver (not gold) when goldEligible=false and LH passes", () => {
+    const result = calculateGrade({
+      buildSuccess: true,
+      scores,
+      thresholds,
+      failOn: "bronze",
+      goldEligible: false,
+    });
+    expect(result.grade).toBe("silver");
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("returns bronze (not gold) when goldEligible=true but LH fails", () => {
+    const result = calculateGrade({
+      buildSuccess: true,
+      scores: { performance: 50, accessibility: 90, seo: 85, bestPractices: 85 },
+      thresholds,
+      failOn: "bronze",
+      goldEligible: true,
+    });
+    expect(result.grade).toBe("bronze");
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("returns unverified (not gold) when goldEligible=true but build fails", () => {
+    const result = calculateGrade({
+      buildSuccess: false,
+      scores,
+      thresholds,
+      failOn: "unverified",
+      goldEligible: true,
+    });
+    expect(result.grade).toBe("unverified");
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("exits 1 when gold required but only silver achieved", () => {
+    const result = calculateGrade({
+      buildSuccess: true,
+      scores,
+      thresholds,
+      failOn: "gold",
+      goldEligible: false,
+    });
+    expect(result.grade).toBe("silver");
+    expect(result.exitCode).toBe(1);
+  });
+
   it("exits 1 when grade worse than fail_on: silver", () => {
     const result = calculateGrade({
       buildSuccess: true,
