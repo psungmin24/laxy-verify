@@ -71,7 +71,7 @@ npx laxy-verify logout
 | Lighthouse | 1 run | 3 runs | 3 runs |
 | Verify E2E | Smoke | Deeper client-send checks | Deeper client-send checks |
 | Detailed report view | No | Yes | Yes |
-| Report export | No | Yes | Yes |
+| `laxy-verify-report.md` export | No | Yes | Yes |
 | Multi-viewport verification | No | No | Yes |
 | Visual diff | No | No | Yes |
 | Failure analysis signals | No | No | Yes |
@@ -131,9 +131,14 @@ Subcommands:
   whoami
 ```
 
-## Result File
+## Result Files
 
 Each run writes `.laxy-result.json`.
+
+Paid plans also write a readable markdown summary to `laxy-verify-report.md`.
+
+- `Pro`: blocker-focused delivery report
+- `Pro+`: release-readiness report with viewport and visual evidence
 
 ```json
 {
@@ -158,6 +163,19 @@ Each run writes `.laxy-result.json`.
   "_plan": "pro_plus"
 }
 ```
+
+### `laxy-verify-report.md`
+
+For Pro and Pro+ runs, the markdown report is designed to be easy to read and easy to paste into an AI coding tool.
+
+It includes:
+
+- the main decision in plain English
+- what passed
+- blockers and warnings
+- exact verification evidence
+- failed E2E scenarios
+- a `Copy For AI` section you can paste directly into Codex, Cursor, Claude, or ChatGPT
 
 ## Limitations
 

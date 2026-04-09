@@ -15,6 +15,7 @@ import { login, clearToken, whoami } from "./auth.js";
 import { getEntitlements, printPlanBanner, type EntitlementFeatures } from "./entitlement.js";
 import { runMultiViewportLighthouse, printMultiViewportResults, allViewportsPass } from "./multi-viewport.js";
 import { runVerifyE2E, type E2EScenarioResult } from "./e2e.js";
+import { buildMarkdownReport, getMarkdownReportPath, shouldWriteMarkdownReport } from "./report-markdown.js";
 import { runVisualDiff, type VisualDiffResult } from "./visual-diff.js";
 import {
   buildVerificationReport,
@@ -56,6 +57,7 @@ interface LaxyResult {
   config_fail_on: string;
   github?: { status: string; grade?: string };
   _plan?: string;
+  markdownReportPath?: string;
   verification?: {
     tier: VerificationReport["tier"];
     report: VerificationReport;
@@ -232,6 +234,9 @@ function consoleOutput(result: LaxyResult): void {
   }
 
   console.log("  Result: .laxy-result.json");
+  if (result.markdownReportPath) {
+    console.log(`  Report: ${path.basename(result.markdownReportPath)}`);
+  }
   console.log(`  Exit code: ${result.exitCode}`);
 
   if ((result.grade === "Silver" || result.grade === "Bronze") && (!result._plan || result._plan === "free")) {
@@ -551,6 +556,15 @@ async function run(): Promise<void> {
       view: verificationView,
     },
   };
+
+  const markdownReportPath = getMarkdownReportPath(args.projectDir);
+  if (shouldWriteMarkdownReport(resultObj)) {
+    const markdownReport = buildMarkdownReport(args.projectDir, resultObj);
+    fs.writeFileSync(markdownReportPath, markdownReport, "utf-8");
+    resultObj.markdownReportPath = markdownReportPath;
+  } else if (fs.existsSync(markdownReportPath)) {
+    fs.rmSync(markdownReportPath, { force: true });
+  }
 
   const inGitHubActions = !!process.env.GITHUB_ACTIONS;
   if (inGitHubActions) {
