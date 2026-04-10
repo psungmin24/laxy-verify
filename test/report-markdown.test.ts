@@ -120,7 +120,7 @@ describe("report markdown", () => {
         },
         view: {
           tier: "pro",
-          question: "Is this strong enough to send to a client?",
+          question: "Ready to show a client?",
           verdict: "hold",
           confidence: "medium",
           summary: "Blocking verification issues were found. Hold release until the blockers are fixed.",
@@ -146,7 +146,7 @@ describe("report markdown", () => {
     });
 
     expect(markdown).toContain("# Laxy Verify Delivery Report");
-    expect(markdown).toContain("Question: Is this strong enough to send to a client?");
+    expect(markdown).toContain("Question: Ready to show a client?");
     expect(markdown).toContain("## Client Delivery Call");
     expect(markdown).toContain("Client delivery recommendation: Hold");
     expect(markdown).toContain("## Client-Facing Blockers");
@@ -154,7 +154,7 @@ describe("report markdown", () => {
     expect(markdown).toContain("## Failed E2E Scenarios");
     expect(markdown).toContain("## Copy For AI");
     expect(markdown).toContain("Use this delivery report to fix the project before sending it to a client.");
-    expect(markdown).toContain("Goal: remove client-visible blockers and reach a confident delivery call.");
+    expect(markdown).toContain("Goal: remove client-visible blockers and reach a confident client-ready call.");
     expect(markdown).toContain("Fix the broken user flow and rerun the verification scenarios.");
   });
 
@@ -209,7 +209,7 @@ describe("report markdown", () => {
         },
         view: {
           tier: "pro_plus",
-          question: "Can I call this release-ready with confidence?",
+          question: "Ready for production?",
           verdict: "release-ready",
           confidence: "high",
           summary: "Core verification checks passed. This run supports a release-ready call.",

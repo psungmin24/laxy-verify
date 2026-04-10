@@ -4,6 +4,7 @@ export type VerificationTier = "free" | "pro" | "pro_plus";
 
 export type ReleaseVerdict =
   | "quick-pass"
+  | "client-ready"
   | "investigate"
   | "hold"
   | "release-ready"
@@ -29,6 +30,8 @@ export interface VerificationInput {
   e2ePassed?: number;
   e2eTotal?: number;
   e2eCoverageGaps?: string[];
+  e2eStabilityPassed?: boolean;
+  e2eConsoleErrorCount?: number;
   lighthouseSkipped?: boolean;
   lighthouseErrorCount?: number;
   viewportIssues?: number;
@@ -39,16 +42,23 @@ export interface VerificationInput {
   hasVisualBaseline?: boolean;
   failureEvidence?: string[];
   lighthouseScores?: LighthouseScores;
+  mobileLighthouseScores?: LighthouseScores;
+  securityAudit?: {
+    totalVulnerabilities: number;
+    critical: number;
+    high: number;
+    summary: string;
+  };
 }
 
 export interface VerificationCheck {
-  key: "build" | "e2e" | "lighthouse" | "viewport" | "visual";
+  key: "build" | "e2e" | "lighthouse" | "viewport" | "visual" | "security" | "mobile-lh" | "console-errors";
   label: string;
   passed: boolean;
 }
 
 export interface VerificationFinding {
-  category: "build" | "performance" | "accessibility" | "seo" | "bestPractices" | "e2e" | "viewport" | "visual";
+  category: "build" | "performance" | "accessibility" | "seo" | "bestPractices" | "e2e" | "viewport" | "visual" | "security" | "runtime";
   severity: "critical" | "high" | "medium";
   title: string;
   description: string;
@@ -60,6 +70,7 @@ export interface VerificationEvidence {
   thresholds: LighthouseThresholds;
   buildPassed: boolean;
   e2ePassedAll: boolean;
+  e2eStabilityPassed: boolean;
   hasE2EData: boolean;
   hasLighthouseData: boolean;
   lighthouseSkipped: boolean;
@@ -69,6 +80,11 @@ export interface VerificationEvidence {
   hasComparableVisualDiffData: boolean;
   visualDiffPassed: boolean;
   lighthousePassed: boolean;
+  hasConsoleErrors: boolean;
+  hasSecurityData: boolean;
+  securityPassed: boolean;
+  hasMobileLighthouseData: boolean;
+  mobileLighthousePassed: boolean;
 }
 
 export interface VerificationReport {

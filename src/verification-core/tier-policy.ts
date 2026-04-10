@@ -49,11 +49,11 @@ export function planToVerificationTier(plan?: string | null): VerificationTier {
 export function getVerificationTierQuestion(tier: VerificationTier): string {
   switch (tier) {
     case "pro":
-      return "Is this strong enough to send to a client?";
+      return "Ready to show a client?";
     case "pro_plus":
-      return "Can I call this release-ready with confidence?";
+      return "Ready for production?";
     default:
-      return "Is this likely to break right now?";
+      return "Any critical issues right now?";
   }
 }
 

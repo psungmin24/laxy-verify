@@ -53,6 +53,8 @@ function sentenceForVerdict(view: TierVerificationView): string {
   const isReleaseTier = view.tier === "pro_plus";
 
   switch (view.verdict) {
+    case "client-ready":
+      return "Yes. This run collected enough evidence to support a client-ready call.";
     case "release-ready":
       return isReleaseTier
         ? "Yes. This run collected enough evidence to support a release-ready call."
@@ -82,10 +84,14 @@ function defaultNextActions(result: MarkdownReportResult): string[] {
   if (view.nextActions.length > 0) return view.nextActions;
 
   switch (view.verdict) {
+    case "client-ready":
+      return ["Send this version to the client, or rerun verification after meaningful UI or flow changes."];
     case "release-ready":
       return ["Ship this version, or archive this report as release evidence."];
     case "investigate":
-      return ["Collect the missing verification evidence, then rerun the command before release."];
+      return view.tier === "pro_plus"
+        ? ["Collect the missing verification evidence, then rerun the command before release."]
+        : ["Collect the missing verification evidence, then rerun the command before sending this to a client."];
     case "build-failed":
       return ["Fix the production build first, then rerun the verification command."];
     case "quick-pass":
@@ -287,6 +293,8 @@ function renderCopyForAI(result: MarkdownReportResult, flavor: ReportFlavor): st
   const closingLine =
     view.verdict === "release-ready"
       ? "Use this as release evidence, or rerun after any code change that could affect quality."
+      : view.verdict === "client-ready"
+        ? "Use this as client handoff evidence, or rerun after any code change that could affect user-facing flows."
       : view.verdict === "investigate" && view.blockers.length === 0
         ? "Collect the missing verification evidence, then rerun the command and compare the new report."
         : "Please fix the blockers first, then rerun the verification command and compare the new report.";
@@ -302,7 +310,7 @@ function renderCopyForAI(result: MarkdownReportResult, flavor: ReportFlavor): st
     flavor === "release"
       ? "Goal: reach a release-ready verdict with strong viewport, visual, and user-flow evidence."
       : flavor === "delivery"
-        ? "Goal: remove client-visible blockers and reach a confident delivery call."
+        ? "Goal: remove client-visible blockers and reach a confident client-ready call."
         : "Goal: fix the blockers and improve confidence on the next run.";
 
   return [
@@ -369,7 +377,7 @@ export function buildMarkdownReport(projectDir: string, result: MarkdownReportRe
     flavor === "release"
       ? "This section answers whether the current build is strong enough to call release-ready."
       : flavor === "delivery"
-        ? "This section answers whether the current build is strong enough to send to a client."
+        ? "This section answers whether the current build is strong enough to call client-ready."
         : "This section explains the outcome of the current verification run.";
   const atAGlanceLead =
     flavor === "release"

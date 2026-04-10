@@ -46,6 +46,20 @@ describe("verification core", () => {
     expect(report.blockers[0]?.category).toBe("performance");
   });
 
+  it("returns client-ready for pro with clean core checks", () => {
+    const report = buildVerificationReport(
+      {
+        buildSuccess: true,
+        e2ePassed: 2,
+        e2eTotal: 2,
+        lighthouseScores: { performance: 82, accessibility: 90, seo: 88, bestPractices: 86 },
+      },
+      { tier: "pro", thresholds }
+    );
+
+    expect(report.verdict).toBe("client-ready");
+  });
+
   it("does not treat skipped lighthouse as a failed check", () => {
     const report = buildVerificationReport(
       {
@@ -128,5 +142,24 @@ describe("verification core", () => {
 
     expect(report.verdict).toBe("release-ready");
     expect(getTierVerificationView(report).showReportExport).toBe(true);
+  });
+
+  it("returns investigate for pro_plus when warning-level runtime risk exists", () => {
+    const report = buildVerificationReport(
+      {
+        buildSuccess: true,
+        e2ePassed: 1,
+        e2eTotal: 1,
+        e2eConsoleErrorCount: 1,
+        multiViewportPassed: true,
+        viewportIssues: 0,
+        visualDiffVerdict: "pass",
+        hasVisualBaseline: true,
+        lighthouseScores: { performance: 80, accessibility: 90, seo: 88, bestPractices: 86 },
+      },
+      { tier: "pro_plus", thresholds }
+    );
+
+    expect(report.verdict).toBe("investigate");
   });
 });

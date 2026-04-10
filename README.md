@@ -1,13 +1,13 @@
 # laxy-verify
 
-CLI verification for frontend apps.
+A frontend verification CLI that catches build breaks, regressions, and client-visible issues before you ship.
 
-`laxy-verify` runs production build checks, Lighthouse, tiered verify E2E, and plan-gated verification features for Free, Pro, and Pro+ accounts.
-It is designed around three user questions:
+`laxy-verify` runs production build checks, Lighthouse, tiered verify E2E, and plan-gated verification for Free, Pro, and Pro+ accounts.
+It is built around three simple questions:
 
-- Free: "Is this likely to break right now?"
-- Pro: "Is this strong enough to send to a client?"
-- Pro+: "Can I call this release-ready with confidence?"
+- Free: "Any critical issues right now?"
+- Pro: "Ready to show a client?"
+- Pro+: "Ready for production?"
 
 ```bash
 npx laxy-verify --init --run
@@ -18,34 +18,68 @@ npx laxy-verify whoami
 npx laxy-verify --help
 ```
 
+What you get from one run:
+
+- a verification grade: `Gold`, `Silver`, `Bronze`, or `Unverified`
+- a decision-oriented verdict such as `client-ready`, `release-ready`, `hold`, or `investigate`
+- `.laxy-result.json` for automation
+- `laxy-verify-report.md` on paid plans for human review and AI handoff
+
 ## Quick Start
 
-### 1. Initialize
+### 1. Run it on a frontend app
 
 ```bash
 cd your-project
-npx laxy-verify --init
-```
-
-This generates `.laxy.yml` and a GitHub Actions workflow.
-
-### 2. Run locally
-
-```bash
 npx laxy-verify .
 ```
 
-### 3. Add to CI
+This runs the default verification flow in the current app directory.
 
-Commit the generated workflow. Each PR gets a verification run, grade output, and optional GitHub reporting.
+### 2. Generate config and CI workflow
+
+```bash
+npx laxy-verify --init
+```
+
+This creates:
+
+- `.laxy.yml`
+- `.github/workflows/laxy-verify.yml`
+
+### 3. Commit the workflow
+
+Once committed, each PR gets a verification run, grade output, and optional GitHub reporting.
+
+### 4. Unlock paid plan features
+
+```bash
+npx laxy-verify login
+npx laxy-verify whoami
+```
+
+For CI, set `LAXY_TOKEN` instead of using interactive login.
+
+```yaml
+env:
+  LAXY_TOKEN: ${{ secrets.LAXY_TOKEN }}
+```
+
+## What It Checks
+
+- production build success
+- Lighthouse thresholds
+- verify E2E scenarios for real user flows
+- Pro+ viewport and visual regression evidence
+- plan-aware verdicts for local runs and CI
 
 ## Verification Tiers
 
 | Plan | Question it answers |
 |------|---------------------|
-| Free | Is this likely to break right now? |
-| Pro | Is this strong enough to send to a client? |
-| Pro+ | Can I call this release-ready with confidence? |
+| Free | Any critical issues right now? |
+| Pro | Ready to show a client? |
+| Pro+ | Ready for production? |
 
 ## Grades
 
@@ -56,35 +90,39 @@ Commit the generated workflow. Each PR gets a verification run, grade output, an
 | Bronze | Build passed |
 | Unverified | Build failed |
 
-## Paid Features
-
-Log in with your Laxy account to unlock paid plan features.
-
-```bash
-npx laxy-verify login
-npx laxy-verify whoami
-npx laxy-verify logout
-```
+## Plan Differences
 
 | Feature | Free | Pro | Pro+ |
 |---------|------|-----|------|
 | Build verification | Yes | Yes | Yes |
 | Lighthouse | 1 run | 3 runs | 3 runs |
-| Verify E2E | Smoke | Deeper client-send checks | Deeper client-send checks |
+| Verify E2E | Smoke checks | Client-facing flow checks | Client-facing flow checks + release evidence |
 | Detailed report view | No | Yes | Yes |
 | `laxy-verify-report.md` export | No | Yes | Yes |
 | Multi-viewport verification | No | No | Yes |
 | Visual diff | No | No | Yes |
 | Failure analysis signals | No | No | Yes |
 
-Pro is for delivery verification.
-Pro+ is for release-confidence verification with extra evidence before you say "ship it."
+Free tells you whether the app is basically standing.
+Pro tells you whether the app is strong enough to call client-ready.
+Pro+ adds the extra evidence needed for a real release-ready call.
 
-For CI, set `LAXY_TOKEN` instead of using interactive login.
+## Sample Output
 
-```yaml
-env:
-  LAXY_TOKEN: ${{ secrets.LAXY_TOKEN }}
+```text
+Plan: Pro+
+Grade: Gold
+Verdict: release-ready
+
+Passed:
+- production build
+- Lighthouse thresholds
+- core E2E flows
+- desktop, tablet, and mobile viewport checks
+
+Artifacts:
+- .laxy-result.json
+- laxy-verify-report.md
 ```
 
 ## Configuration
@@ -109,6 +147,12 @@ thresholds:
 
 fail_on: "bronze"
 ```
+
+Typical cases:
+
+- raise `fail_on` to `silver` or `gold` in CI when you want stricter gates
+- set `framework`, `build_command`, or `dev_command` if auto-detection is not enough
+- increase `lighthouse_runs` when you want more stable performance evidence
 
 ## CLI Options
 
@@ -143,7 +187,7 @@ Each run writes `.laxy-result.json`.
 
 Paid plans also write a readable markdown summary to `laxy-verify-report.md`.
 
-- `Pro`: blocker-focused delivery report
+- `Pro`: client-ready delivery report
 - `Pro+`: release-readiness report with viewport and visual evidence
 
 Exit behavior follows the verification verdict, not just the legacy grade.
@@ -190,6 +234,13 @@ It includes:
 - failed E2E scenarios
 - a `Copy For AI` section you can paste directly into Codex, Cursor, Claude, or ChatGPT
 
+## Environment Notes
+
+- Best on current LTS Node releases. `Node 20.18+` is recommended.
+- Monorepos should point `laxy-verify` at the actual app directory.
+- `playwright` is optional. The CLI can run without it.
+- Pro+ viewport and visual checks increase runtime.
+
 ## Regression Fixtures
 
 The repo also includes dedicated regression fixtures under `.qa-regression-fixtures/`.
@@ -201,6 +252,11 @@ They intentionally break build, navigation, coverage, performance, viewport beha
 - Dev-server-based Lighthouse can differ from production hosting.
 - Pro+ visual diff and viewport checks increase runtime.
 - Local verification is most stable on current LTS Node releases.
+
+## Links
+
+- GitHub: https://github.com/psungmin24/Laxy/tree/main/laxy-verify
+- Issues: https://github.com/psungmin24/Laxy/issues
 
 ## License
 

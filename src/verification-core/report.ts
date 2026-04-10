@@ -76,6 +76,16 @@ export function buildVerificationEvidence(
     input.visualDiffVerdict !== "warn" &&
     input.visualDiffVerdict !== "rollback";
   const lighthousePassed = getLighthousePass(input.lighthouseScores, thresholds);
+  const e2eStabilityPassed = input.e2eStabilityPassed !== false;
+  const hasConsoleErrors = typeof input.e2eConsoleErrorCount === "number" && input.e2eConsoleErrorCount > 0;
+  const hasSecurityData = !!input.securityAudit;
+  const securityPassed = hasSecurityData
+    ? input.securityAudit!.critical === 0 && input.securityAudit!.high === 0
+    : true;
+  const hasMobileLighthouseData = !!input.mobileLighthouseScores;
+  const mobileLighthousePassed = hasMobileLighthouseData
+    ? getLighthousePass(input.mobileLighthouseScores, thresholds)
+    : false;
 
   return {
     input,
@@ -83,6 +93,7 @@ export function buildVerificationEvidence(
     buildPassed,
     hasE2EData,
     e2ePassedAll,
+    e2eStabilityPassed,
     hasLighthouseData,
     lighthouseSkipped,
     hasMultiViewportData,
@@ -91,6 +102,11 @@ export function buildVerificationEvidence(
     hasComparableVisualDiffData,
     visualDiffPassed,
     lighthousePassed,
+    hasConsoleErrors,
+    hasSecurityData,
+    securityPassed,
+    hasMobileLighthouseData,
+    mobileLighthousePassed,
   };
 }
 
@@ -167,6 +183,80 @@ export function getImprovementRecommendations(
       description: input.e2eCoverageGaps!.join(" "),
       action: "Add or expose a stable primary user flow, then rerun verification so the paid checks cover real interactions.",
     });
+  }
+
+  if (input.e2eStabilityPassed === false) {
+    findings.push({
+      category: "e2e",
+      severity: "high",
+      title: "E2E stability check failed",
+      description: "E2E scenarios passed on the first run but failed on the second stability run.",
+      action: "Fix flaky tests or unstable application state, then rerun verification.",
+    });
+  }
+
+  // Runtime console errors — answers "이거 당장 크게 터지나?"
+  if (typeof input.e2eConsoleErrorCount === "number" && input.e2eConsoleErrorCount > 0) {
+    findings.push({
+      category: "runtime",
+      severity: input.e2eConsoleErrorCount >= 3 ? "high" : "medium",
+      title: `Runtime console errors detected (${input.e2eConsoleErrorCount})`,
+      description: "The app emits console errors during E2E verification, indicating runtime issues.",
+      action: "Open browser DevTools, fix the console errors, and rerun verification.",
+    });
+  }
+
+  // Security audit — answers "클라이언트한테 보내도 되는 수준인가?"
+  if (input.securityAudit) {
+    const audit = input.securityAudit;
+    if (audit.critical > 0) {
+      findings.push({
+        category: "security",
+        severity: "critical",
+        title: `Critical security vulnerabilities (${audit.critical})`,
+        description: `npm audit found ${audit.critical} critical vulnerabilities: ${audit.summary}`,
+        action: "Run npm audit fix or update the vulnerable packages before deployment.",
+      });
+    } else if (audit.high > 0) {
+      findings.push({
+        category: "security",
+        severity: "high",
+        title: `High security vulnerabilities (${audit.high})`,
+        description: `npm audit found ${audit.high} high-severity vulnerabilities: ${audit.summary}`,
+        action: "Run npm audit fix or update the vulnerable packages.",
+      });
+    } else if (audit.totalVulnerabilities > 0) {
+      findings.push({
+        category: "security",
+        severity: "medium",
+        title: `Security vulnerabilities (${audit.totalVulnerabilities})`,
+        description: `npm audit found moderate/low vulnerabilities: ${audit.summary}`,
+        action: "Review npm audit output and update packages when convenient.",
+      });
+    }
+  }
+
+  // Mobile Lighthouse — Pro tier mobile check
+  if (input.mobileLighthouseScores) {
+    const mobileScores = input.mobileLighthouseScores;
+    if (mobileScores.performance < thresholds.performance) {
+      findings.push({
+        category: "performance",
+        severity: "high",
+        title: `Mobile performance below threshold (${mobileScores.performance} / ${thresholds.performance})`,
+        description: "Mobile users will experience slow load times or poor interactivity.",
+        action: "Optimize mobile performance: reduce JS bundles, defer non-critical assets, optimize images.",
+      });
+    }
+    if (mobileScores.accessibility < thresholds.accessibility) {
+      findings.push({
+        category: "accessibility",
+        severity: "high",
+        title: `Mobile accessibility below threshold (${mobileScores.accessibility} / ${thresholds.accessibility})`,
+        description: "Mobile accessibility issues detected that may block users.",
+        action: "Fix touch targets, contrast, and semantic structure for mobile layouts.",
+      });
+    }
   }
 
   const hasMultiViewportData =
@@ -306,6 +396,13 @@ export function buildVerificationReport(
   const findings = getImprovementRecommendations(input, thresholds);
   const blockers = findings.filter((finding) => finding.severity === "critical" || finding.severity === "high");
   const warnings = findings.filter((finding) => finding.severity === "medium");
+  const hasWarnings = warnings.length > 0;
+  const coreChecksPassed = evidence.buildPassed && evidence.e2ePassedAll && evidence.lighthousePassed;
+  const proPlusEvidenceComplete =
+    evidence.hasMultiViewportData &&
+    evidence.multiViewportPassed &&
+    evidence.hasComparableVisualDiffData &&
+    evidence.visualDiffPassed;
   const grade = getVerificationGrade(input, thresholds);
   const failureEvidence = (input.failureEvidence ?? []).filter(Boolean).slice(0, 5);
 
@@ -323,22 +420,27 @@ export function buildVerificationReport(
     summary = "Blocking verification issues were found. Hold release until the blockers are fixed.";
   } else if (
     tier === "pro_plus" &&
-    evidence.buildPassed &&
-    evidence.e2ePassedAll &&
-    evidence.lighthousePassed &&
-    evidence.hasMultiViewportData &&
-    evidence.multiViewportPassed &&
-    evidence.hasComparableVisualDiffData &&
-    evidence.visualDiffPassed
+    coreChecksPassed &&
+    evidence.e2eStabilityPassed &&
+    proPlusEvidenceComplete &&
+    !hasWarnings
   ) {
     verdict = "release-ready";
     confidence = "high";
     summary = "Core verification checks passed. This run supports a release-ready call.";
   } else if (
     tier === "pro_plus" &&
-    evidence.buildPassed &&
-    evidence.e2ePassedAll &&
-    evidence.lighthousePassed &&
+    coreChecksPassed &&
+    evidence.e2eStabilityPassed &&
+    proPlusEvidenceComplete &&
+    hasWarnings
+  ) {
+    verdict = "investigate";
+    confidence = "medium";
+    summary = "Core checks passed, but non-blocking warnings remain. Review warnings before calling this run release-ready.";
+  } else if (
+    tier === "pro_plus" &&
+    coreChecksPassed &&
     (!evidence.hasMultiViewportData || !evidence.hasComparableVisualDiffData)
   ) {
     verdict = "investigate";
@@ -347,10 +449,24 @@ export function buildVerificationReport(
     if (!evidence.hasMultiViewportData) missingEvidence.push("multi-viewport evidence");
     if (!evidence.hasComparableVisualDiffData) missingEvidence.push("visual diff evidence");
     summary = `Core checks passed, but release-ready confidence still needs ${missingEvidence.join(" and ")}.`;
+  } else if (tier === "pro" && coreChecksPassed && !hasWarnings) {
+    verdict = "client-ready";
+    confidence = "medium";
+    summary = "No blocking issues found. Build, E2E, and Lighthouse checks passed. This run supports a client-ready call.";
+  } else if (tier === "pro" && coreChecksPassed && hasWarnings) {
+    verdict = "investigate";
+    confidence = "medium";
+    summary = "Core checks passed, but warning-level risks remain. Review warnings before calling this run client-ready.";
   } else if (tier === "free") {
-    verdict = "quick-pass";
-    confidence = evidence.hasLighthouseData && evidence.lighthousePassed ? "medium" : "low";
-    summary = "No immediate hard blockers were found in the quick verification pass.";
+    if (evidence.hasConsoleErrors) {
+      verdict = "quick-pass";
+      confidence = "low";
+      summary = "Build passed, but runtime console errors were detected. The app may crash or misbehave for users.";
+    } else {
+      verdict = "quick-pass";
+      confidence = evidence.hasLighthouseData && evidence.lighthousePassed ? "medium" : "low";
+      summary = "No immediate hard blockers were found in the quick verification pass.";
+    }
   } else {
     verdict = "investigate";
     confidence = "medium";
@@ -363,6 +479,15 @@ export function buildVerificationReport(
     { key: "build", label: "Production build", passed: evidence.buildPassed },
     ...(evidence.hasE2EData
       ? [{ key: "e2e" as const, label: `E2E ${input.e2ePassed ?? 0}/${input.e2eTotal ?? 0}`, passed: evidence.e2ePassedAll }]
+      : []),
+    ...(evidence.hasConsoleErrors
+      ? [{ key: "console-errors" as const, label: `Console errors (${input.e2eConsoleErrorCount ?? 0})`, passed: false }]
+      : [{ key: "console-errors" as const, label: "No console errors", passed: true }]),
+    ...(evidence.hasSecurityData
+      ? [{ key: "security" as const, label: `Security (${input.securityAudit?.summary ?? "unknown"})`, passed: evidence.securityPassed }]
+      : []),
+    ...(evidence.hasMobileLighthouseData
+      ? [{ key: "mobile-lh" as const, label: "Mobile Lighthouse", passed: evidence.mobileLighthousePassed }]
       : []),
     ...(evidence.hasMultiViewportData
       ? [{

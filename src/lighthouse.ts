@@ -3,6 +3,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { LighthouseScores } from "./grade.js";
 
+// laxy-verify 패키지의 node_modules 절대 경로
+// runner script를 CJS로 실행하고 NODE_PATH에 이 경로를 추가해서
+// 어느 프로젝트 디렉토리에서 실행해도 lighthouse/chrome-launcher를 찾도록 함
+// __dirname = dist/ 이므로 한 단계 올라가서 node_modules를 가리킴
+const LH_NODE_MODULES_DIR = path.resolve(__dirname, "..", "node_modules");
+
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
@@ -29,41 +35,51 @@ async function removeDirWithRetries(dirPath: string, retries = 5): Promise<void>
   }
 }
 
+// CJS 방식으로 runner script를 작성
+// NODE_PATH를 통해 laxy-verify node_modules를 참조
 function writeRunnerScript(runnerPath: string): void {
-  const source = `import fs from "node:fs/promises";
-import lighthouse from "lighthouse";
-import { launch } from "chrome-launcher";
+  const source = `"use strict";
+const fs = require("node:fs/promises");
+const _lhModule = require("lighthouse");
+const lighthouse = _lhModule.default || _lhModule;
+const _clModule = require("chrome-launcher");
+const { launch } = _clModule.default || _clModule;
 
 const [url, reportPath, chromeDir] = process.argv.slice(2);
 
-const chrome = await launch({
-  logLevel: "error",
-  chromeFlags: [
-    "--headless=new",
-    "--no-sandbox",
-    "--disable-dev-shm-usage",
-    \`--user-data-dir=\${chromeDir}\`,
-  ],
-});
-
-try {
-  const result = await lighthouse(url, {
-    port: chrome.port,
-    output: "json",
+(async () => {
+  const chrome = await launch({
     logLevel: "error",
-    onlyCategories: ["performance", "accessibility", "seo", "best-practices"],
+    chromeFlags: [
+      "--headless=new",
+      "--no-sandbox",
+      "--disable-dev-shm-usage",
+      "--user-data-dir=" + chromeDir,
+    ],
   });
 
-  if (!result?.lhr) {
-    throw new Error("Lighthouse returned no report.");
+  try {
+    const result = await lighthouse(url, {
+      port: chrome.port,
+      output: "json",
+      logLevel: "error",
+      onlyCategories: ["performance", "accessibility", "seo", "best-practices"],
+    });
+
+    if (!result || !result.lhr) {
+      throw new Error("Lighthouse returned no report.");
+    }
+
+    await fs.writeFile(reportPath, JSON.stringify(result.lhr), "utf8");
+  } finally {
+    await chrome.kill();
   }
-
-  await fs.writeFile(reportPath, JSON.stringify(result.lhr), "utf8");
-} finally {
-  await chrome.kill();
-}
+})().catch((err) => {
+  process.stderr.write(err.message + "\\n");
+  process.exit(1);
+});
 `;
-
+  // .cjs 확장자로 저장해서 Node가 CommonJS로 실행하도록 함
   fs.writeFileSync(runnerPath, source, "utf-8");
 }
 
@@ -75,7 +91,7 @@ interface LhResult {
 export async function runLighthouse(port: number, runs: number): Promise<LhResult> {
   const baseTmpDir = path.join(process.cwd(), ".laxy-tmp", `lighthouse-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   const reportsDir = path.join(baseTmpDir, "reports");
-  const runnerPath = path.join(baseTmpDir, "run-lighthouse.mjs");
+  const runnerPath = path.join(baseTmpDir, "run-lighthouse.cjs");
 
   fs.mkdirSync(reportsDir, { recursive: true });
   writeRunnerScript(runnerPath);
@@ -101,6 +117,8 @@ export async function runLighthouse(port: number, runs: number): Promise<LhResul
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
+          // NODE_PATH를 추가해서 laxy-verify node_modules에서 패키지를 찾도록 함
+          NODE_PATH: [LH_NODE_MODULES_DIR, process.env.NODE_PATH].filter(Boolean).join(path.delimiter),
           TEMP: baseTmpDir,
           TMP: baseTmpDir,
           TMPDIR: baseTmpDir,

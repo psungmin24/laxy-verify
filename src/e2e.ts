@@ -1,17 +1,22 @@
 import puppeteer from "puppeteer";
 import type { VerificationTier } from "./verification-core/types.js";
+import type { UserScenario } from "./config.js";
+import { crawlApp, buildScenariosFromCrawl, type CrawlOptions } from "./crawler.js";
 
 export interface E2EStep {
-  type: "click" | "fill" | "check_visible" | "wait" | "scroll" | "clear_fill" | "check_validation" | "check_healthy_page";
+  type: "click" | "fill" | "check_visible" | "check_text" | "wait" | "scroll" | "clear_fill" | "check_validation" | "check_healthy_page" | "goto";
   selector?: string;
   value?: string;
   duration?: number;
+  expectedText?: string;
+  gotoUrl?: string;
   description: string;
 }
 
 export interface E2EScenario {
   name: string;
   steps: E2EStep[];
+  initialUrl?: string;
 }
 
 export interface E2EStepResult {
@@ -25,6 +30,7 @@ export interface E2EScenarioResult {
   passed: boolean;
   steps: E2EStepResult[];
   error?: string;
+  consoleErrors?: string[];
 }
 
 interface DomSnapshot {
@@ -242,6 +248,66 @@ export function buildVerifyScenarios(snapshot: DomSnapshot, tier: VerificationTi
   return scenarios.slice(0, getScenarioLimit(tier));
 }
 
+export function convertUserScenarios(userScenarios: UserScenario[]): E2EScenario[] {
+  return userScenarios.map((scenario) => {
+    const steps: E2EStep[] = [];
+    let initialUrl: string | undefined;
+
+    for (const raw of scenario.steps) {
+      if (raw.goto) {
+        if (!initialUrl) {
+          // First goto becomes the scenario's initialUrl
+          initialUrl = raw.goto;
+        } else {
+          // Subsequent gotos become explicit navigation steps
+          steps.push({
+            type: "goto",
+            gotoUrl: raw.goto,
+            description: `Navigate to ${raw.goto}`,
+          });
+        }
+      } else if (raw.fill && raw.with !== undefined) {
+        steps.push({
+          type: "clear_fill",
+          selector: raw.fill,
+          value: raw.with,
+          description: `Fill ${raw.fill} with "${raw.with}"`,
+        });
+      } else if (raw.click) {
+        steps.push({
+          type: "click",
+          selector: raw.click,
+          description: `Click ${raw.click}`,
+        });
+      } else if (raw.expect_visible) {
+        steps.push({
+          type: "check_visible",
+          selector: raw.expect_visible,
+          description: `Expect ${raw.expect_visible} to be visible`,
+        });
+      } else if (raw.expect_text) {
+        steps.push({
+          type: "check_text",
+          expectedText: raw.expect_text,
+          description: `Expect text "${raw.expect_text}" on page`,
+        });
+      } else if (raw.wait !== undefined) {
+        steps.push({
+          type: "wait",
+          duration: raw.wait,
+          description: `Wait ${raw.wait}ms`,
+        });
+      }
+    }
+
+    return {
+      name: scenario.name,
+      steps,
+      initialUrl,
+    };
+  });
+}
+
 async function captureDomSnapshot(url: string): Promise<DomSnapshot> {
   const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
   try {
@@ -314,10 +380,21 @@ async function captureDomSnapshot(url: string): Promise<DomSnapshot> {
 async function executeScenario(url: string, scenario: E2EScenario): Promise<E2EScenarioResult> {
   const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
   const stepResults: E2EStepResult[] = [];
+  const consoleErrors: string[] = [];
   try {
     const page = await browser.newPage();
+    page.on("console", (msg) => {
+      if (msg.type() === "error") {
+        consoleErrors.push(`Console error: ${msg.text().slice(0, 200)}`);
+      }
+    });
+    page.on("pageerror", (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      consoleErrors.push(`Uncaught error: ${msg.slice(0, 200)}`);
+    });
     await page.setViewport({ width: 1280, height: 720 });
-    await page.goto(url, { waitUntil: "networkidle2", timeout: 20000 });
+    const targetUrl = scenario.initialUrl ? new URL(scenario.initialUrl, url).href : url;
+    await page.goto(targetUrl, { waitUntil: "networkidle2", timeout: 20000 });
     await page.waitForSelector("body", { timeout: 5000 });
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
@@ -344,6 +421,18 @@ async function executeScenario(url: string, scenario: E2EScenario): Promise<E2ES
             if (!step.selector) throw new Error("Missing selector");
             await page.waitForSelector(step.selector, { visible: true, timeout: 8000 });
             break;
+          case "check_text": {
+            const textToFind = step.expectedText;
+            if (!textToFind) throw new Error("Missing expectedText");
+            const found = await page.evaluate((text) => {
+              const bodyText = document.body?.innerText ?? "";
+              return bodyText.includes(text);
+            }, textToFind);
+            if (!found) {
+              throw new Error(`Expected text "${textToFind}" not found on page`);
+            }
+            break;
+          }
           case "check_healthy_page":
             const hasErrorPageSignals = await page.evaluate(() => {
               const title = document.title ?? "";
@@ -424,6 +513,13 @@ async function executeScenario(url: string, scenario: E2EScenario): Promise<E2ES
               await page.evaluate(() => window.scrollBy(0, 300));
             }
             break;
+          case "goto": {
+            if (!step.gotoUrl) throw new Error("Missing gotoUrl");
+            const gotoTarget = new URL(step.gotoUrl, page.url()).href;
+            await page.goto(gotoTarget, { waitUntil: "networkidle2", timeout: 20000 });
+            await page.waitForSelector("body", { timeout: 5000 });
+            break;
+          }
         }
         result.passed = true;
       } catch (error) {
@@ -439,6 +535,7 @@ async function executeScenario(url: string, scenario: E2EScenario): Promise<E2ES
       name: scenario.name,
       passed: stepResults.every((step) => step.passed),
       steps: stepResults,
+      consoleErrors,
     };
   } catch (error) {
     return {
@@ -446,6 +543,7 @@ async function executeScenario(url: string, scenario: E2EScenario): Promise<E2ES
       passed: false,
       steps: stepResults,
       error: error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200),
+      consoleErrors,
     };
   } finally {
     await browser.close();
@@ -454,17 +552,41 @@ async function executeScenario(url: string, scenario: E2EScenario): Promise<E2ES
 
 export async function runVerifyE2E(
   url: string,
-  tier: VerificationTier
+  tier: VerificationTier,
+  userScenarios?: UserScenario[],
+  crawlOptions?: { enabled: boolean } & CrawlOptions
 ): Promise<{
   scenarios: E2EScenario[];
   results: E2EScenarioResult[];
   passed: number;
   failed: number;
   coverageGaps: string[];
+  consoleErrors: string[];
 }> {
-  const snapshot = await captureDomSnapshot(url);
-  const scenarios = buildVerifyScenarios(snapshot, tier);
-  const coverageGaps = getVerificationCoverageGaps(scenarios, tier);
+  let scenarios: E2EScenario[];
+  let coverageGaps: string[];
+
+  if (userScenarios && userScenarios.length > 0) {
+    console.log(`  Using ${userScenarios.length} user-defined scenario(s) from .laxy.yml`);
+    scenarios = convertUserScenarios(userScenarios);
+    coverageGaps = [];
+  } else if (crawlOptions?.enabled) {
+    console.log("  Crawling app to discover routes and interactions...");
+    const crawlResult = await crawlApp(url, crawlOptions);
+    console.log(`  Crawled ${crawlResult.crawledCount} page(s), found ${crawlResult.totalLinks} internal link(s)`);
+    scenarios = buildScenariosFromCrawl(crawlResult, tier);
+    if (scenarios.length === 0) {
+      // Fallback to DOM snapshot if crawl found nothing useful
+      const snapshot = await captureDomSnapshot(url);
+      scenarios = buildVerifyScenarios(snapshot, tier);
+    }
+    coverageGaps = getVerificationCoverageGaps(scenarios, tier);
+  } else {
+    const snapshot = await captureDomSnapshot(url);
+    scenarios = buildVerifyScenarios(snapshot, tier);
+    coverageGaps = getVerificationCoverageGaps(scenarios, tier);
+  }
+
   const results: E2EScenarioResult[] = [];
 
   for (const scenario of scenarios) {
@@ -474,5 +596,9 @@ export async function runVerifyE2E(
   const passed = results.filter((result) => result.passed).length;
   const failed = results.length - passed;
 
-  return { scenarios, results, passed, failed, coverageGaps };
+  const consoleErrors = Array.from(
+    new Set(results.flatMap((r) => r.consoleErrors ?? []))
+  ).slice(0, 10);
+
+  return { scenarios, results, passed, failed, coverageGaps, consoleErrors };
 }

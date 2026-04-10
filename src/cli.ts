@@ -20,10 +20,12 @@ import {
   type EntitlementFeatures,
   type TestablePlan,
 } from "./entitlement.js";
-import { runMultiViewportLighthouse, printMultiViewportResults, allViewportsPass } from "./multi-viewport.js";
+import { runMultiViewportLighthouse, printMultiViewportResults, allViewportsPass, runMobileLighthouse } from "./multi-viewport.js";
 import { runVerifyE2E, type E2EScenarioResult } from "./e2e.js";
+import { runPlaywrightE2E, isPlaywrightAvailable, type BrowserName, type CrossBrowserResult } from "./playwright-runner.js";
 import { buildMarkdownReport, getMarkdownReportPath, shouldWriteMarkdownReport } from "./report-markdown.js";
 import { runVisualDiff, type VisualDiffResult } from "./visual-diff.js";
+import { runSecurityAudit, type SecurityAuditResult } from "./security-audit.js";
 import {
   buildVerificationReport,
   getTierVerificationView,
@@ -47,6 +49,7 @@ interface CLIArgs {
   initRun: boolean;
   multiViewport: boolean;
   failureAnalysis: boolean;
+  crawl: boolean;
   planOverride?: TestablePlan;
   help: boolean;
 }
@@ -56,7 +59,10 @@ interface LaxyResult {
   timestamp: string;
   build: { success: boolean; durationMs: number; errors: string[] };
   e2e?: { passed: number; failed: number; total: number; results: E2EScenarioResult[] };
+  crossBrowser?: CrossBrowserResult[];
   lighthouse: LighthouseScores & { runs: number } | null;
+  mobileLighthouse?: LighthouseScores | null;
+  security?: SecurityAuditResult | null;
   visualDiff?: VisualDiffResult | null;
   thresholds: { performance: number; accessibility: number; seo: number; bestPractices: number };
   ciMode: boolean;
@@ -65,6 +71,8 @@ interface LaxyResult {
   config_fail_on: string;
   github?: { status: string; grade?: string };
   _plan?: string;
+  _verbose_failure?: boolean;
+  _failure_analysis?: boolean;
   markdownReportPath?: string;
   verification?: {
     tier: VerificationReport["tier"];
@@ -147,6 +155,7 @@ function parseArgs(): CLIArgs {
     initRun: flags.init !== undefined && flags.run !== undefined,
     multiViewport: flags["multi-viewport"] !== undefined,
     failureAnalysis: flags["failure-analysis"] !== undefined,
+    crawl: flags.crawl !== undefined,
     planOverride: flags["plan-override"] as TestablePlan | undefined,
     help: flags.help !== undefined || flags.h !== undefined,
   };
@@ -223,27 +232,78 @@ function consoleOutput(result: LaxyResult): void {
     console.log(`  E2E: ${result.e2e.passed}/${result.e2e.total} passed`);
   }
 
+  if (result.crossBrowser && result.crossBrowser.length > 0) {
+    console.log("  Cross-browser:");
+    for (const cbr of result.crossBrowser) {
+      const status = cbr.failed === 0 ? "OK" : "FAIL";
+      console.log(`    ${cbr.browser}: ${cbr.passed}/${cbr.results.length} passed ${status}`);
+    }
+  }
+
   if (result.visualDiff) {
     console.log(`  Visual diff: ${result.visualDiff.diffPercentage}% (${result.visualDiff.verdict})`);
   }
 
+  if (result.security) {
+    console.log(`  Security: ${result.security.summary}`);
+  }
+
+  if (result.mobileLighthouse) {
+    const ml = result.mobileLighthouse;
+    console.log(`  Mobile LH: P=${ml.performance} A=${ml.accessibility} SEO=${ml.seo} BP=${ml.bestPractices}`);
+  }
+
   if (result.verification) {
     const view = result.verification.view;
+    const isPro = view.tier === "pro" || view.tier === "pro_plus";
+    const isProPlus = view.tier === "pro_plus";
+    // verbose_failure: Pro에서 서버가 활성화하면 blockers 전체 설명 표시
+    // failure_analysis: Pro+에서 서버가 활성화하면 warnings 전체 설명 + evidence 전체 표시
+    const verboseFailure = isPro && (result._verbose_failure ?? isPro);
+    const failureAnalysis = isProPlus && (result._failure_analysis ?? isProPlus);
+
     console.log(`  Verification tier: ${view.tier}`);
     console.log(`  Question: ${view.question}`);
     console.log(`  Verdict: ${view.verdict} (${view.confidence})`);
     console.log(`  Summary: ${view.summary}`);
+
+    // Pro/Pro+: 체크 통과 목록 요약
+    if (isPro && view.passes.length > 0) {
+      const passedChecks = view.passes.filter((p) => p.passed).map((p) => p.label);
+      const failedChecks = view.passes.filter((p) => !p.passed).map((p) => p.label);
+      if (passedChecks.length > 0) console.log(`  Passed: ${passedChecks.join(", ")}`);
+      if (failedChecks.length > 0) console.log(`  Failed: ${failedChecks.join(", ")}`);
+    }
+
+    // Blockers: 제목은 모든 티어, Fix 액션은 verbose_failure(Pro+) 이상에서 표시
     if (view.blockers.length > 0) {
       console.log("  Blockers:");
-      for (const blocker of view.blockers) console.log(`    - ${blocker.title}`);
+      for (const blocker of view.blockers) {
+        console.log(`    - ${blocker.title}`);
+        if (verboseFailure) console.log(`      Fix: ${blocker.action}`);
+      }
     }
+
+    // Warnings: Pro/Pro+에서만 표시, Review 액션은 failure_analysis(Pro+)에서 표시
+    if (isPro && view.warnings.length > 0) {
+      console.log("  Warnings:");
+      for (const warning of view.warnings) {
+        console.log(`    - ${warning.title}`);
+        if (failureAnalysis) console.log(`      Review: ${warning.action}`);
+      }
+    }
+
     if (view.nextActions.length > 0) {
       console.log("  Next actions:");
       for (const action of view.nextActions) console.log(`    - ${action}`);
     }
-    if (view.failureEvidence.length > 0) {
+
+    // Evidence: failure_analysis(Pro+)는 전체, verbose_failure(Pro)는 3개, Free는 2개
+    const evidenceLimit = failureAnalysis ? view.failureEvidence.length : verboseFailure ? 3 : 2;
+    const evidenceToShow = view.failureEvidence.slice(0, evidenceLimit);
+    if (evidenceToShow.length > 0) {
       console.log("  Evidence:");
-      for (const item of view.failureEvidence) console.log(`    - ${item}`);
+      for (const item of evidenceToShow) console.log(`    - ${item}`);
     }
   }
 
@@ -291,6 +351,7 @@ async function run(): Promise<void> {
     --skip-lighthouse Skip Lighthouse but still run build and E2E
     --plan-override   free | pro | pro_plus (downgrade testing only)
     --multi-viewport  Pro+: Lighthouse on desktop/tablet/mobile
+    --crawl           Crawl the app to discover routes before E2E
     --badge           Print shields.io badge markdown
     --help            Show this help
 
@@ -449,8 +510,14 @@ async function run(): Promise<void> {
   let multiViewportScores = null;
   let allViewportsOk = false;
   let e2eResult: LaxyResult["e2e"] | undefined;
+  let crossBrowserResults: CrossBrowserResult[] | undefined;
   let e2eCoverageGaps: string[] = [];
+  let e2eConsoleErrors: string[] = [];
+  let e2eStabilityPassed = true;
   let visualDiffResult: VisualDiffResult | null = null;
+  let securityAuditResult: SecurityAuditResult | null = null;
+  let mobileLighthouseScores: import("./grade.js").LighthouseScores | null = null;
+  const failureEvidence: string[] = [];
 
   if (buildResult.success) {
     let servePid: number | undefined;
@@ -486,13 +553,63 @@ async function run(): Promise<void> {
           multiViewportScores = await runMultiViewportLighthouse(port);
           printMultiViewportResults(multiViewportScores, adjustedThresholds);
           allViewportsOk = allViewportsPass(multiViewportScores, adjustedThresholds);
+          // Surface screenshot diff issues in failure evidence
+          if (multiViewportScores.screenshotDiffs) {
+            for (const diff of multiViewportScores.screenshotDiffs) {
+              if (!diff.baselineCreated && diff.diffPercent > 10) {
+                failureEvidence.push(`Viewport screenshot: ${diff.viewport} diff ${diff.diffPercent}% exceeds 10% threshold`);
+              }
+            }
+          }
         } catch (mvErr) {
           console.error(`Multi-viewport error: ${mvErr instanceof Error ? mvErr.message : String(mvErr)}`);
         }
       }
 
+      // Pro: single mobile Lighthouse check (if not using full multi-viewport)
+      if (
+        !args.skipLighthouse &&
+        verificationTier === "pro" &&
+        !effectiveFeatures.multi_viewport
+      ) {
+        try {
+          mobileLighthouseScores = await runMobileLighthouse(port);
+          if (mobileLighthouseScores) {
+            const mobilePassed =
+              mobileLighthouseScores.performance >= adjustedThresholds.performance &&
+              mobileLighthouseScores.accessibility >= adjustedThresholds.accessibility;
+            if (!mobilePassed) {
+              failureEvidence.push(
+                `Mobile LH: P=${mobileLighthouseScores.performance} A=${mobileLighthouseScores.accessibility}`
+              );
+            }
+          }
+        } catch (mobileLhErr) {
+          console.error(`Mobile Lighthouse error: ${mobileLhErr instanceof Error ? mobileLhErr.message : String(mobileLhErr)}`);
+        }
+      }
+
+      // Pro/Pro+: security audit
+      if (verificationTier !== "free") {
+        try {
+          securityAuditResult = await runSecurityAudit(args.projectDir);
+          if (securityAuditResult.critical > 0 || securityAuditResult.high > 0) {
+            failureEvidence.push(`Security: ${securityAuditResult.summary}`);
+          }
+        } catch (secErr) {
+          console.error(`Security audit error: ${secErr instanceof Error ? secErr.message : String(secErr)}`);
+        }
+      }
+
+      const crawlEnabled = args.crawl || config.crawl;
+      const crawlOpts = crawlEnabled
+        ? { enabled: true, maxDepth: config.max_crawl_depth, maxPages: config.max_crawl_pages }
+        : undefined;
+      let lastE2EScenarios: import("./e2e.js").E2EScenario[] | undefined;
+
       try {
-        const e2eRuns = await runVerifyE2E(verifyUrl, verificationTier);
+        const e2eRuns = await runVerifyE2E(verifyUrl, verificationTier, config.scenarios, crawlOpts);
+        lastE2EScenarios = e2eRuns.scenarios;
         e2eResult = {
           passed: e2eRuns.passed,
           failed: e2eRuns.failed,
@@ -500,11 +617,57 @@ async function run(): Promise<void> {
           results: e2eRuns.results,
         };
         e2eCoverageGaps = e2eRuns.coverageGaps;
+        e2eConsoleErrors = e2eRuns.consoleErrors;
+
+        // Pro+ stability: run E2E a second time if first run passed all
+        if (verificationTier === "pro_plus" && e2eRuns.passed === e2eRuns.results.length && e2eRuns.results.length > 0) {
+          console.log("  [Pro+] Running stability pass (run 2/2)...");
+          const e2eRuns2 = await runVerifyE2E(verifyUrl, verificationTier, config.scenarios, crawlOpts);
+          if (e2eRuns2.passed < e2eRuns2.results.length) {
+            e2eStabilityPassed = false;
+            e2eCoverageGaps.push("Stability check failed on second run");
+            const failedNames = e2eRuns2.results
+              .filter((r) => !r.passed)
+              .map((r) => r.name)
+              .join(", ");
+            failureEvidence.push(`E2E stability: second run failed (${failedNames})`);
+          } else {
+            console.log("  [Pro+] Stability pass: OK (2/2 runs passed)");
+          }
+        }
+
         if (e2eRuns.coverageGaps.length > 0) {
           console.error(`E2E coverage warning: ${e2eRuns.coverageGaps.join(" ")}`);
         }
+        if (e2eRuns.consoleErrors.length > 0) {
+          console.error(`E2E console errors: ${e2eRuns.consoleErrors.length} detected`);
+        }
       } catch (e2eErr) {
         console.error(`E2E error: ${e2eErr instanceof Error ? e2eErr.message : String(e2eErr)}`);
+      }
+
+      // Cross-browser E2E via Playwright (if non-chromium browsers configured)
+      const extraBrowsers = (config.browsers || []).filter(
+        (b): b is BrowserName => b !== "chromium" && ["firefox", "webkit"].includes(b)
+      );
+      if (extraBrowsers.length > 0 && lastE2EScenarios && lastE2EScenarios.length > 0) {
+        const pwAvailable = await isPlaywrightAvailable();
+        if (pwAvailable) {
+          try {
+            crossBrowserResults = await runPlaywrightE2E(verifyUrl, lastE2EScenarios, extraBrowsers);
+            for (const cbr of crossBrowserResults) {
+              console.log(`  Cross-browser ${cbr.browser}: ${cbr.passed}/${cbr.results.length} passed`);
+              if (cbr.failed > 0) {
+                const failedNames = cbr.results.filter(r => !r.passed).map(r => r.name).join(", ");
+                failureEvidence.push(`Cross-browser ${cbr.browser}: ${failedNames} failed`);
+              }
+            }
+          } catch (cbErr) {
+            console.error(`Cross-browser error: ${cbErr instanceof Error ? cbErr.message : String(cbErr)}`);
+          }
+        } else {
+          console.log("  Note: Cross-browser testing requires playwright. Run: npm install -D playwright && npx playwright install");
+        }
       }
 
       if (verificationTier === "pro_plus") {
@@ -525,7 +688,7 @@ async function run(): Promise<void> {
 
   const verificationTier = planToVerificationTier(effectiveFeatures.plan);
   const viewportSummary = summarizeViewportIssues(multiViewportScores, adjustedThresholds);
-  const failureEvidence = [
+  failureEvidence.push(
     ...buildResult.errors.slice(0, 3).map((error) => `Build: ${error}`),
     ...(lighthouseErrorCount > 0 ? [`Lighthouse: ${lighthouseErrorCount} run error(s) were recorded during collection.`] : []),
     ...(e2eResult
@@ -534,6 +697,7 @@ async function run(): Promise<void> {
           .slice(0, 2)
           .map((scenario) => `E2E: ${scenario.name}${scenario.error ? ` - ${scenario.error}` : ""}`)
       : []),
+    ...e2eConsoleErrors.slice(0, 2).map((e) => `Console: ${e}`),
     ...e2eCoverageGaps.slice(0, 2).map((gap) => `E2E coverage: ${gap}`),
     ...(viewportSummary.count > 0 && viewportSummary.summary ? [`Viewport: ${viewportSummary.summary}`] : []),
     ...(visualDiffResult
@@ -543,7 +707,7 @@ async function run(): Promise<void> {
             : "Visual diff: baseline seeded",
         ]
       : []),
-  ];
+  );
 
   const verificationReport = buildVerificationReport(
     {
@@ -552,6 +716,8 @@ async function run(): Promise<void> {
       e2ePassed: e2eResult?.passed,
       e2eTotal: e2eResult?.total,
       e2eCoverageGaps,
+      e2eConsoleErrorCount: e2eConsoleErrors.length,
+      e2eStabilityPassed,
       lighthouseSkipped: args.skipLighthouse,
       lighthouseErrorCount,
       viewportIssues: multiViewportScores ? viewportSummary.count : undefined,
@@ -561,6 +727,15 @@ async function run(): Promise<void> {
       visualDiffPercentage: visualDiffResult?.diffPercentage,
       hasVisualBaseline: visualDiffResult?.hasBaseline,
       lighthouseScores: scores,
+      mobileLighthouseScores: mobileLighthouseScores ?? undefined,
+      securityAudit: securityAuditResult
+        ? {
+            totalVulnerabilities: securityAuditResult.totalVulnerabilities,
+            critical: securityAuditResult.critical,
+            high: securityAuditResult.high,
+            summary: securityAuditResult.summary,
+          }
+        : undefined,
       failureEvidence,
     },
     {
@@ -582,7 +757,10 @@ async function run(): Promise<void> {
       errors: buildResult.errors,
     },
     e2e: e2eResult,
+    crossBrowser: crossBrowserResults,
     lighthouse: lighthouseResult,
+    mobileLighthouse: mobileLighthouseScores,
+    security: securityAuditResult,
     visualDiff: visualDiffResult,
     thresholds: adjustedThresholds,
     ciMode: config.ciMode,
@@ -590,6 +768,8 @@ async function run(): Promise<void> {
     exitCode,
     config_fail_on: config.fail_on,
     _plan: effectiveFeatures.plan,
+    _verbose_failure: effectiveFeatures.verbose_failure,
+    _failure_analysis: effectiveFeatures.failure_analysis,
     verification: {
       tier: verificationTier,
       report: verificationReport,
