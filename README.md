@@ -255,8 +255,8 @@ They intentionally break build, navigation, coverage, performance, viewport beha
 
 ## Links
 
-- GitHub: https://github.com/psungmin24/Laxy/tree/main/laxy-verify
-- Issues: https://github.com/psungmin24/Laxy/issues
+- GitHub: https://github.com/SUNgm24/Laxy/tree/main/laxy-verify
+- Issues: https://github.com/SUNgm24/Laxy/issues
 
 ## License
 

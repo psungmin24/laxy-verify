@@ -1,17 +1,17 @@
 {
   "name": "laxy-verify",
-  "version": "1.1.21",
+  "version": "1.1.22",
   "description": "Frontend verification CLI for build checks, Lighthouse, E2E, and release readiness",
   "license": "MIT",
   "type": "commonjs",
-  "homepage": "https://github.com/psungmin24/Laxy/tree/main/laxy-verify#readme",
+  "homepage": "https://github.com/SUNgm24/Laxy/tree/main/laxy-verify#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/psungmin24/Laxy.git",
+    "url": "git+https://github.com/SUNgm24/Laxy.git",
     "directory": "laxy-verify"
   },
   "bugs": {
-    "url": "https://github.com/psungmin24/Laxy/issues"
+    "url": "https://github.com/SUNgm24/Laxy/issues"
   },
   "keywords": [
     "frontend",
